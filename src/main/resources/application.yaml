@@ -35,14 +35,14 @@ resilience4j:
   ratelimiter:
     instances:
       aiProvider:
-        limit-for-period: 5
-        limit-refresh-period: 300s
+        limit-for-period: 30
+        limit-refresh-period: 30s
         timeout-duration: 0
   bulkhead:
     instances:
       aiProvider:
-        max-concurrent-calls: 1
-        max-wait-duration: 0s
+        max-concurrent-calls: 5
+        max-wait-duration: 1s
 
 management:
   endpoints:

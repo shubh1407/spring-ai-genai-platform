@@ -7,15 +7,19 @@ import com.spring_ai.ai_copilot.service.ChatService;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
 @RestController
 @RequestMapping("/api/chat")
+@Validated
 public class ChatController {
 
     private static final Logger log = LoggerFactory.getLogger(ChatController.class);
@@ -58,7 +62,7 @@ public class ChatController {
     }*/
 
     @GetMapping
-    public FeedbackAnalysis getChatMessage(@RequestParam String message) {
+    public FeedbackAnalysis getChatMessage(@Valid @RequestParam @NotNull(message="Message is required parameter") @NotBlank(message="Message is required parameter") String message) {
         log.info("controller.chat.analysis.started operation=chat.analysis");
         try {
             FeedbackAnalysis analysis = chatService.getChatMessage(message);
@@ -71,7 +75,7 @@ public class ChatController {
     }
 
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> getChatMessageStreaming(@RequestParam String message) {
+    public Flux<String> getChatMessageStreaming(@Valid @RequestParam @NotNull(message="Message is required parameter") @NotBlank(message="Message is required parameter") String message) {
         log.info("controller.chat.stream.started operation=chat.stream");
         try {
             Flux<String> stream = chatService.getChatMessageStream(message);
@@ -84,7 +88,7 @@ public class ChatController {
     }
 
     @GetMapping(value = "/streamV2", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> getChatMessageStreamingV2(@RequestParam String message) {
+    public Flux<String> getChatMessageStreamingV2(@Valid @RequestParam @NotNull(message="Message is required parameter") @NotBlank(message="Message is required parameter") String message) {
         log.info("controller.chat.streamV2.started operation=chat.stream.v2");
         try {
             Flux<String> stream = chatService.getChatMessageStreamingV2(message);
