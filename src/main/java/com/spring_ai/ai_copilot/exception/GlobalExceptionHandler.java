@@ -39,7 +39,7 @@ public class GlobalExceptionHandler {
                LocalDateTime.now(),
                status.value(),
                errorCode,
-               List.of(e.getMessage())
+               List.of("An unexpected error occurred")
        );
 
        return ResponseEntity

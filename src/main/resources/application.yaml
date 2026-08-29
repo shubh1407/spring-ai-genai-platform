@@ -15,31 +15,29 @@ spring:
       chat:
         model: openai/gpt-oss-120b
         extra-body:
-          #include_reasoning: false
           reasoning_effort: high
       timeout: 30s
+
 logging:
   level:
-org.springframework.ai: DEBUG
-org.springframework.retry: DEBUG
+    org.springframework.ai: DEBUG
+    org.springframework.retry: DEBUG
 
 resilience4j:
-circuitbreaker:
-  instances:
-aiProvider:
-  sliding-window-size: 5
-  minimum-number-of-calls: 5
-  failure-rate-threshold: 50
-  wait-duration-in-open-state: 30s
-  permitted-number-of-calls-in-half-open-state: 2
-
+  circuitbreaker:
+    instances:
+      aiProvider:
+        sliding-window-size: 5
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 2
   ratelimiter:
     instances:
       aiProvider:
-  limit-for-period: 5
-  limit-refresh-period: 300s
-  timeout-duration: 0
-
+        limit-for-period: 5
+        limit-refresh-period: 300s
+        timeout-duration: 0
   bulkhead:
     instances:
       aiProvider:
@@ -51,7 +49,6 @@ management:
     web:
       exposure:
         include: health,info,metrics
-
   endpoint:
     health:
       show-details: always
