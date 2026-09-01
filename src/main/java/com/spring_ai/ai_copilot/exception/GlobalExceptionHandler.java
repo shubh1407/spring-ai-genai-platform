@@ -166,6 +166,25 @@ public class GlobalExceptionHandler {
        return ResponseEntity.status(status).body(errorResponse);
     }
 
+    @ExceptionHandler(value = UnsupportedDocumentTypeException.class)
+    public ResponseEntity<ErrorResponse> handleUnsupportedDocumentTypeException(UnsupportedDocumentTypeException e) {
+        HttpStatus status = HttpStatus.BAD_REQUEST;
+        ErrorResponse response = new ErrorResponse(
+                LocalDateTime.now(),
+                status.value(),
+                "RAG_VALIDATION_ERROR",
+                List.of(e.getMessage())
+        );
+        recordErrorMetrics(
+                "rag.document.ingestion.error",
+                "RAG_VALIDATION_ERROR",
+                status
+        );
+        return ResponseEntity
+               .status(status)
+               .body(response);
+    }
+
     private ResponseEntity<ErrorResponse> buildErrorResponse(String errorCode, HttpStatus status, List<String> messages, String operation) {
        recordErrorMetrics(operation, errorCode, status);
        log.warn("global.exception.handler.failed operation={} status={} errorCode={} exception={}",
