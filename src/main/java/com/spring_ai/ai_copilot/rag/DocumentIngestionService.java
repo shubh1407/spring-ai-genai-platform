@@ -3,6 +3,9 @@ package com.spring_ai.ai_copilot.rag;
 import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 import com.spring_ai.ai_copilot.exception.AiProviderException;
 import com.spring_ai.ai_copilot.exception.UnsupportedDocumentTypeException;
+import com.spring_ai.ai_copilot.service.ChatService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.JsonReader;
 import org.springframework.ai.reader.TextReader;
@@ -22,8 +25,11 @@ import java.util.List;
 @Service
 public class DocumentIngestionService {
 
+    private static final Logger log = LoggerFactory.getLogger(DocumentIngestionService.class);
+
     public List<Document> getDocuments(String path) throws IOException {
 
+        log.info("Getting documents from {}", path);
         List<Document> documents = new ArrayList<>();
         ResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
         Resource [] resources = resolver.getResources("classpath:/"+path+"/*");
@@ -32,6 +38,7 @@ public class DocumentIngestionService {
             documents.addAll(getDocumentsFromFile(resource));
         }
 
+        log.info("Found {} documents", documents.size());
         /*documents.forEach(document->{
             System.out.println(document.getMetadata());
         });*/
@@ -44,9 +51,14 @@ public class DocumentIngestionService {
         String ext =
                 StringUtils.getFilenameExtension(resource.getFilename());
 
+
+
         if (ext == null) {
+            log.error("Extension is invalid");
             throw new UnsupportedDocumentTypeException("file format is not defined");
         }
+
+        log.info("Getting documents from {} and extension {}", resource.getFilename(),ext);
 
         List<Document> documents= switch (ext.toLowerCase()) {
             case "txt" -> new TextReader(resource).read();

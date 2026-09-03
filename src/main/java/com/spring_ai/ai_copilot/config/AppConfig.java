@@ -7,6 +7,8 @@ import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.StructuredOutputValidationAdvisor;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.openai.http.okhttp.OpenAiHttpClientBuilderCustomizer;
+import org.springframework.ai.transformer.splitter.TextSplitter;
+import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -44,4 +46,15 @@ public class AppConfig {
                 new GroqReasoningInterceptor(objectMapper)
         );
     }
+
+    @Bean
+    public TextSplitter getTextSplitter() {
+        return TokenTextSplitter.builder()
+                .withChunkSize(20)
+                .withMinChunkSizeChars(10)
+                .withMinChunkLengthToEmbed(2)
+                .withMaxNumChunks(10000)
+                .build();
+    }
+
 }
