@@ -17,6 +17,17 @@ spring:
         extra-body:
           reasoning_effort: high
       timeout: 30s
+    model:
+      embedding:
+        text: google-genai
+    google:
+      genai:
+        embedding:
+          api-key: ${GOOGLE_API_KEY}
+          project-id: gen-lang-client-0321316403
+          text:
+            model: gemini-embedding-2
+
 
 logging:
   level:

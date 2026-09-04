@@ -1,6 +1,7 @@
 package com.spring_ai.ai_copilot.controller;
 
 import com.spring_ai.ai_copilot.rag.DocumentChunkingService;
+import com.spring_ai.ai_copilot.rag.DocumentEmbeddingService;
 import com.spring_ai.ai_copilot.rag.DocumentIngestionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,11 +21,14 @@ public class RagController {
 
     private final DocumentChunkingService  documentChunkingService;
 
+    private final DocumentEmbeddingService documentEmbeddingService;
+
     private static final Logger log = LoggerFactory.getLogger(RagController.class);
 
-    public RagController(DocumentIngestionService documentIngestionService, DocumentChunkingService documentChunkingService) {
+    public RagController(DocumentIngestionService documentIngestionService, DocumentChunkingService documentChunkingService, DocumentEmbeddingService documentEmbeddingService) {
         this.documentIngestionService = documentIngestionService;
         this.documentChunkingService = documentChunkingService;
+        this.documentEmbeddingService = documentEmbeddingService;
     }
 
     @GetMapping("rag")
@@ -33,6 +37,13 @@ public class RagController {
         log.info("rawDocument = {}", rawDocument.size());
         List<Document> chunkedDocuments = documentChunkingService.chunkDocuments(rawDocument);
         log.info("chunkedDocuments = {}", chunkedDocuments.size());
+        List<float[]> vectors= documentEmbeddingService.getVectorsForDocument(chunkedDocuments);
+        log.info("vectors = {}", vectors.size());
         return  chunkedDocuments;
+    }
+
+    @GetMapping("vector")
+    public float[] getVectors(@RequestParam String text) throws IOException {
+        return documentEmbeddingService.getVectorsForText(text);
     }
 }
