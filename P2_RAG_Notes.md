@@ -1193,3 +1193,875 @@ An in-memory VectorStore does not provide durable application-restart persistenc
 - [x] Understand in-memory persistence limitation
 - [x] Understand how indexing connects chunks, embeddings and VectorStore
 - [x] Understand why manual embedding before `VectorStore.add()` can cause unnecessary duplicate embedding work
+
+Day 6 — Retrieval
+
+What is Retrieval?
+
+Retrieval is the process of finding the most relevant knowledge from the indexed knowledge base for a user's query.
+
+The purpose is not to generate the final answer.
+
+User Query
+↓
+Retrieval
+↓
+Relevant Evidence / Chunks
+
+The fundamental separation is:
+
+Retrieval  → Find relevant information
+Generation → Generate the answer
+
+Retrieval Pipeline
+
+The retrieval flow is:
+
+User Query
+↓
+Query Embedding
+↓
+Candidate Retrieval
+↓
+Similarity Search
+↓
+Filtering
+↓
+Ranking
+↓
+Relevant Chunks
+
+The retrieved chunks are later supplied to the generation layer.
+
+Query Embedding
+
+Documents were embedded during indexing:
+
+Document Chunk
+↓
+EmbeddingModel
+↓
+Document Vector
+
+At query time, the user query is also converted into a vector:
+
+User Query
+↓
+EmbeddingModel
+↓
+Query Vector
+
+The query vector can then be compared against the stored document vectors.
+
+Important rule
+
+The document and query embeddings must be compatible.
+
+Documents
+↓
+Embedding Model A
+↓
+Document Vectors
+
+Query
+↓
+Embedding Model A
+↓
+Query Vector
+
+Changing the embedding model or incompatible dimensions can require existing documents to be re-indexed.
+
+Retrieval vs Generation
+
+Retrieval answers:
+
+Which information is relevant?
+
+Generation answers:
+
+How should that information be used to produce the response?
+
+Example:
+
+Question:
+"What is the refund policy?"
+
+Retriever:
+
+Refund policy chunk
+Customers can request refunds within 30 days...
+
+The retriever does not generate the natural-language answer.
+
+The LLM performs generation after retrieval.
+
+Candidate Retrieval
+
+A knowledge base may contain a large number of chunks.
+
+Retrieval first finds potentially relevant candidates.
+
+Large Knowledge Base
+↓
+Candidate Retrieval
+↓
+Potentially Relevant Chunks
+
+A VectorStore performs semantic similarity search by comparing the query representation with stored vector representations.
+
+Similarity Search
+
+The project uses the VectorStore similarity-search capability.
+
+Conceptually:
+
+vectorStore.similaritySearch(query);
+
+The query is embedded and compared against stored document vectors.
+
+The returned documents are ordered according to the VectorStore's similarity/relevance mechanism.
+
+Important
+
+High similarity does not guarantee:
+
+correctness
+
+completeness
+
+truth
+
+applicability to the exact business question
+
+Similarity is a relevance signal.
+
+It is not a truth score.
+
+TopK
+
+topK defines the maximum number of results returned from retrieval.
+
+Example:
+
+topK = 2
+
+means the search returns at most two results.
+
+It does not mean that two useful results necessarily exist.
+
+TopK trade-off
+
+Smaller topK:
+
+Less context
+Less noise
+Lower latency
+Lower downstream token cost
+Potentially lower recall
+
+Larger topK:
+
+More coverage
+Potentially higher recall
+More context
+More noise
+Higher latency
+Higher downstream token cost
+
+Therefore topK is a retrieval-quality and system-cost parameter.
+
+Similarity Threshold
+
+A similarity threshold defines the minimum relevance requirement for returned results.
+
+Conceptually:
+
+Candidates
+↓
+Similarity
+↓
+Threshold
+↓
+Accept sufficiently relevant results
+
+A threshold helps prevent weakly related chunks from automatically being treated as useful context.
+
+Threshold trade-off
+
+Higher threshold:
+
+Higher precision
+Potentially lower recall
+
+Lower threshold:
+
+Higher recall
+Potentially lower precision
+
+A threshold does not guarantee correctness.
+
+It only controls the minimum similarity/relevance accepted by the retrieval configuration.
+
+Metadata Filtering
+
+Semantic similarity is not always the only retrieval constraint.
+
+Metadata can restrict which documents are eligible.
+
+Example:
+
+fileType = pdf
+
+Conceptually:
+
+Query
+↓
+Metadata Constraint
+↓
+Eligible Documents
+↓
+Similarity Search
+↓
+Results
+
+The project tested:
+
+fileType = pdf
+
+and:
+
+fileType = txt
+
+The PDF filter returned PDF chunks.
+
+The TXT filter returned no results for the tested query because there was no matching TXT result satisfying the retrieval conditions.
+
+Metadata Filtering + Security
+
+Metadata filtering can also become an important security mechanism.
+
+Example:
+
+tenantId = companyA
+
+The retrieval system should restrict the candidate set to documents the current user is authorized to access.
+
+Correct conceptual architecture:
+
+User
+↓
+Authorization
+↓
+Allowed document scope
+↓
+Retrieval
+↓
+Authorized chunks
+↓
+LLM
+
+The LLM should not be treated as the security boundary.
+
+It is unsafe to retrieve unauthorized information and simply instruct the LLM not to reveal it.
+
+Precision
+
+Precision answers:
+
+Of the results retrieved, how many were actually relevant?
+
+Example:
+
+Retrieved results = 5
+Relevant results = 4
+
+Precision = 4 / 5 = 80%
+
+High precision means retrieval contains less irrelevant information.
+
+Recall
+
+Recall answers:
+
+Of all relevant information available, how much did retrieval successfully retrieve?
+
+Example:
+
+Relevant chunks available = 5
+Relevant chunks retrieved = 4
+
+Recall = 4 / 5 = 80%
+
+High recall means the retriever is less likely to miss useful evidence.
+
+Precision vs Recall Trade-off
+
+Very restrictive retrieval:
+
+Few results
+↓
+Less noise
+↓
+Higher precision
+↓
+Potentially lower recall
+
+Very broad retrieval:
+
+More results
+↓
+More coverage
+↓
+Potentially higher recall
+↓
+More noise
+↓
+Potentially lower precision
+
+The goal of a good RAG retrieval system is not simply maximum precision or maximum recall.
+
+The goal is an appropriate balance for the application's requirements.
+
+Retrieval Quality
+
+A retrieval system should be evaluated on more than whether the API returns results.
+
+Important dimensions are:
+
+Relevance
+Coverage
+Noise
+Usability
+
+Relevance
+
+Are the returned chunks actually related to the query?
+
+Coverage
+
+Does the retrieved evidence contain enough information to answer the query?
+
+Noise
+
+How much unnecessary or unrelated information was retrieved?
+
+Usability
+
+Can the retrieved chunks provide useful evidence to the generation layer?
+
+Retrieval Failure Cases
+
+1. Relevant information exists
+
+Query
+↓
+Correct relevant chunks
+
+This is the ideal case.
+
+2. Information does not exist
+
+Suppose the knowledge base has no office parking policy.
+
+A query:
+
+"What is the office parking policy?"
+
+may still return some nearest vector matches.
+
+Why?
+
+Vector similarity answers:
+
+Which available chunks are closest?
+
+It does not inherently prove:
+
+The knowledge base contains the answer.
+
+This is one reason similarity thresholds and later grounding/answer handling are important.
+
+3. Partial information
+
+A query may require information from multiple chunks, while retrieval returns only part of the evidence.
+
+Query
+↓
+Partial evidence
+
+High similarity does not guarantee answer completeness.
+
+4. Multiple relevant chunks
+
+Some answers require multiple chunks.
+
+Example:
+
+Chunk A → refund period
+Chunk B → enterprise-specific rule
+Chunk C → required order ID
+
+A complete answer may require all of them.
+
+Therefore retrieval should be evaluated based on evidence coverage, not simply the single highest-scoring chunk.
+
+Query Complexity
+
+Different query types create different retrieval requirements.
+
+Simple factual query
+
+"What is the refund period?"
+
+A focused chunk may be sufficient.
+
+Broad query
+
+"Explain the company's refund policy."
+
+Multiple chunks may be useful.
+
+Multi-part query
+
+"What is the refund period and what documents are required?"
+
+Multiple pieces of evidence may be required.
+
+Ambiguous query
+
+"What is the policy?"
+
+The query may not provide enough information to identify the intended topic.
+
+Query Rewriting
+
+Query rewriting converts an ambiguous or conversational query into a more retrieval-friendly query.
+
+Example conversation:
+
+User:
+What is the refund period?
+
+Assistant:
+30 days.
+
+User:
+What about enterprise customers?
+
+The literal query:
+
+"What about enterprise customers?"
+
+may be weak for retrieval.
+
+A rewritten query could be:
+
+"What is the refund policy for enterprise customers?"
+
+Then:
+
+Rewritten Query
+↓
+Embedding
+↓
+Retrieval
+
+When rewriting is useful
+
+Especially for:
+
+conversational follow-ups
+
+incomplete queries
+
+pronouns such as "it", "that", "they"
+
+context-dependent questions
+
+ambiguous search queries
+
+A clear query does not need unnecessary rewriting.
+
+Reranking
+
+Initial vector retrieval can produce a candidate set.
+
+A reranker can then evaluate those candidates more deeply against the query.
+
+Conceptually:
+
+Query
+↓
+Vector Retrieval
+↓
+Top N Candidates
+↓
+Reranker
+↓
+Best Candidates
+
+The purpose is potentially better relevance ordering.
+
+Trade-off
+
+Benefits:
+
+Potentially better relevance
+Better precision
+
+Costs:
+
+Additional latency
+Additional computation
+Additional system complexity
+
+Reranking is therefore typically used as a second-stage retrieval technique rather than replacing fast candidate retrieval completely.
+
+Hybrid Retrieval
+
+Semantic vector search is powerful, but it is not ideal for every query.
+
+Exact terms can be especially important for:
+
+IDs
+
+error codes
+
+product codes
+
+exact names
+
+technical identifiers
+
+Keyword/lexical search can perform well for such cases.
+
+Hybrid retrieval combines semantic and keyword retrieval:
+
+                    Query
+                      ↓
+             ┌────────┴────────┐
+             ↓                 ↓
+      Keyword Search    Vector Search
+             ↓                 ↓
+             └────────┬────────┘
+                      ↓
+                Combined Results
+                      ↓
+                    Ranking
+
+The goal is to benefit from both:
+
+Semantic meaning
++
+Exact term matching
+
+Hybrid retrieval is a retrieval-quality technique, not a requirement for every RAG system.
+
+Retrieval vs Truth
+
+A retrieved chunk is evidence, not automatically verified truth.
+
+Potential issues include:
+
+Outdated document
+Incorrect source
+Incomplete chunk
+Ambiguous information
+Conflicting documents
+Poor extraction
+Poor retrieval match
+
+Therefore:
+
+Retrieval
+↓
+Evidence
+
+not:
+
+Retrieval
+↓
+Guaranteed Truth
+
+The generation layer must later be designed to use retrieved evidence appropriately.
+
+Retrieval vs Answer Completeness
+
+Even if retrieval returns highly relevant chunks, the answer may still be incomplete.
+
+Example:
+
+Chunk 1:
+Refunds are allowed within 30 days.
+
+Chunk 2:
+Enterprise customers can request a refund within 60 days
+if their contract allows it.
+
+Query:
+
+"What is the refund period for enterprise customers?"
+
+The second chunk is the critical evidence.
+
+A generic refund chunk may be highly relevant to the topic but insufficient for the exact question.
+
+Therefore:
+
+Topic relevance
+≠
+Question completeness
+
+Retrieval Latency
+
+Retrieval contributes to overall request latency.
+
+Conceptually:
+
+Request
+↓
+Query Embedding
+↓
+Vector Search
+↓
+Filtering
+↓
+Ranking
+↓
+Results
+
+Each stage can add latency.
+
+As systems grow, production retrieval may involve:
+
+network calls
+
+database queries
+
+vector indexes
+
+metadata filtering
+
+reranking
+
+Therefore retrieval architecture must balance quality with response time.
+
+Retrieval Cost
+
+Retrieval can contribute to system cost through:
+
+Query embedding
++
+Vector database operations
++
+Optional reranking
++
+Downstream LLM context processing
+
+Higher topK can indirectly increase LLM cost because more retrieved text may be included in the eventual context.
+
+Therefore retrieval quality and cost are connected.
+
+Current Project Implementation
+
+The current retrieval implementation uses the existing VectorStore layer.
+
+Conceptually:
+
+User Query
+↓
+EmbeddingModel
+↓
+SimpleVectorStore
+↓
+Similarity Search
+↓
+topK
+↓
+Similarity Threshold
+↓
+Metadata Filter
+↓
+Retrieved Documents
+
+The current implementation has been tested with:
+
+Basic semantic search
+topK
+Similarity threshold
+Metadata filtering
+
+Practical Retrieval Observations
+
+Generic refund query
+
+Query:
+
+What is the refund policy?
+
+Retrieved relevant chunks included:
+
+Company Refund Policy
+
+Customers can request a refund within 30 days.
+
+Enterprise customers can request a refund within 60 days.
+
+Refund requests must include the original order ID.
+
+This demonstrates:
+
+Multiple relevant chunks
++
+Good coverage
++
+Low retrieval noise
+
+Enterprise-specific query
+
+Query:
+
+What is the refund period for enterprise customers?
+
+Retrieved:
+
+Enterprise customers can request a refund within 60 days
+if their contract allows it.
+
+This is a highly relevant and focused retrieval result.
+
+The condition:
+
+if their contract allows it
+
+is part of the evidence and must not be silently removed when the information is later used for answering.
+
+Metadata-filtered query
+
+Using:
+
+fileType = pdf
+
+restricted results to PDF documents.
+
+Using:
+
+fileType = txt
+
+produced no results for the tested retrieval conditions.
+
+This demonstrates that semantic retrieval can be constrained using structured metadata.
+
+Final Day 6 Mental Model
+
+                         USER QUERY
+                              │
+                              ▼
+                    Query Understanding
+                              │
+                     optional rewrite
+                              │
+                              ▼
+                       Query Embedding
+                              │
+                              ▼
+                    Candidate Retrieval
+                              │
+                ┌─────────────┴─────────────┐
+                │                           │
+                ▼                           ▼
+         Semantic Search              Keyword Search
+          (if required)               (if required)
+                │                           │
+                └─────────────┬─────────────┘
+                              ▼
+                       Candidate Set
+                              │
+                              ▼
+                    Metadata / ACL Filter
+                              │
+                              ▼
+                           Ranking
+                              │
+                       optional reranking
+                              │
+                              ▼
+                      TopK / Threshold
+                              │
+                              ▼
+                     Relevant Evidence
+                              │
+                              ▼
+                         Generation
+
+The essential production goal is:
+
+Good Retrieval
+=
+Relevant
++
+Sufficient
++
+Low Noise
++
+Authorized
++
+Fast Enough
++
+Cost Efficient
+
+Day 6 — Final Revision
+
+Retrieval is the RAG stage responsible for finding useful evidence for a user's query.
+
+The core flow is:
+
+Query
+↓
+Query Embedding
+↓
+Candidate Retrieval
+↓
+Filtering
+↓
+Ranking
+↓
+Relevant Evidence
+
+Important retrieval controls and concepts are:
+
+Similarity search
+
+topK
+
+Similarity threshold
+
+Metadata filtering
+
+Precision
+
+Recall
+
+Query complexity
+
+Query rewriting
+
+Reranking
+
+Hybrid retrieval
+
+Retrieval failure cases
+
+Retrieval vs generation
+
+Retrieval vs truth
+
+Retrieval latency
+
+Retrieval cost
+
+Authorization-aware retrieval
+
+The central principle is:
+
+A good retriever does not merely return mathematically similar chunks. It returns useful, sufficiently complete, low-noise and authorized evidence for the generation layer.
