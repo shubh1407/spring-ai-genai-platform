@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 public record RagRequest(
         @NotBlank(message = "Conversation Id can't be blank")
         String conversationId,
-        @NotBlank(message = "Message can't be blank")
-        @Size(max = 1000, message = "Message can't be longer than 1000 characters")
+        @NotBlank(message = "Question can't be blank")
+        @Size(max = 1000, message = "Question can't be longer than 1000 characters")
         String question) {
 }

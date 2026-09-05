@@ -54,7 +54,7 @@ public class RagController {
 
     @GetMapping("vectorSearchWithTopK")
     public List<Document> getRelevantChunksWithTopK(@RequestParam String text) throws IOException {
-        SearchRequest searchRequest = SearchRequest.builder().topK(2).query(text).similarityThreshold(0.7).build();
+        SearchRequest searchRequest = SearchRequest.builder().topK(5).query(text).similarityThreshold(0.7).build();
         List<Document> result= ragService.searchDocuments(searchRequest);
         result.forEach(result1->{
             log.info("result text = {}", result1.getText());
@@ -68,7 +68,7 @@ public class RagController {
         var b = new FilterExpressionBuilder();
 
         SearchRequest searchRequest = SearchRequest.builder()
-                .topK(2)
+                .topK(5)
                 .query(text)
                 .similarityThreshold(0.7)
                 .filterExpression(
