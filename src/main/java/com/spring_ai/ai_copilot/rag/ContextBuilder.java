@@ -11,9 +11,7 @@ import java.util.stream.Collectors;
 public class ContextBuilder {
 
     public String buildContext(List<Document> documents){
-        return documents.stream().map(document ->
-                        new StringBuilder("----").append(document.getId()).append("-----")
-                                .append(document.getText()))
+        return documents.stream().map(Document::getText)
                 .filter(StringUtils::hasText).collect(Collectors.joining("\n\n"));
 
     }

@@ -82,6 +82,36 @@ public class AiProviderClient {
         }
     }
 
+
+    @Bulkhead(name = "aiProvider")
+    @RateLimiter(name = "aiProvider")
+    @CircuitBreaker(name = "aiProvider")
+    public ChatResponse getMultiQuery(String systemPrompt,String prompt) {
+        long startedAt = System.nanoTime();
+        String operation = "chat.multiquery";
+        log.info("ai.provider.request.started operation={} provider={} model={} ", operation, PROVIDER, MODEL);
+
+        try {
+            String response = client.prompt()
+                    .system(systemPrompt)
+                    .user(prompt)
+                    .call()
+                    .content();
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            recordAiMetrics(operation, "success", null, latencyMs);
+            log.info("ai.provider.request.completed operation={} provider={} model={} latencyMs={} status=success", operation, PROVIDER, MODEL, latencyMs);
+            return new ChatResponse(response);
+        } catch (Exception e) {
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            String errorCode = "AI_PROVIDER_ERROR";
+            recordAiMetrics(operation, "error", errorCode, latencyMs);
+            log.warn("ai.provider.request.failed operation={} provider={} model={} latencyMs={} errorCode={} exception={}",
+                    operation, PROVIDER, MODEL, latencyMs, errorCode, e.getClass().getSimpleName());
+            throw e;
+        }
+    }
+
     @Bulkhead(name = "aiProvider")
     @RateLimiter(name = "aiProvider")
     @CircuitBreaker(name = "aiProvider")

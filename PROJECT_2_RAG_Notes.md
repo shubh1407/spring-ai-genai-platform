@@ -3877,3 +3877,410 @@ Implemented:
 - retrieval-order preservation
 - PDF/TXT/multiple-source testing
 - unsupported-query behavior verification
+
+# P2 — RAG — Day 10
+
+## Retrieval Quality, Query Transformation, Multi-Query Retrieval & Reranking
+
+Day 10 focused on improving retrieval quality beyond basic vector search using query transformation, multi-query retrieval, candidate generation, and reranking.
+
+---
+
+## 1. Retrieval Quality
+
+Retrieval quality is about whether the documents returned by the retrieval layer are actually useful for answering the user's question.
+
+Important failure cases covered:
+- Vocabulary mismatch
+- Ambiguous queries
+- Exact identifiers or terminology
+- Queries containing multiple aspects
+- Semantically similar but incorrect documents
+- Relevant documents outside the initial candidate pool
+
+A grounded LLM cannot answer correctly if the required evidence was never retrieved.
+
+---
+
+## 2. Query Transformation
+
+Query transformation changes the user's original question into a form that can improve retrieval.
+
+```text
+User Question
+      ↓
+QueryTransformer
+      ↓
+Search Query
+      ↓
+Vector Retrieval
+```
+
+The original user question is preserved for final answer generation.
+
+The current `QueryTransformer` is intentionally simple and returns the input query. More advanced transformation can be expanded later.
+
+---
+
+## 3. Candidate Retrieval
+
+A larger candidate pool is retrieved before reranking.
+
+```text
+Query
+ ↓
+Vector Search
+ ↓
+topK = 10
+ ↓
+Candidate Documents
+```
+
+A reranker cannot recover a relevant document that was never included in the candidate set.
+
+```text
+Vector Search topK = 10
+        ↓
+Candidates
+        ↓
+Reranker
+        ↓
+Final topK = 5
+```
+
+---
+
+## 4. Reranking
+
+Reranking reorders initial candidate documents using a second relevance signal.
+
+```text
+Candidate Documents
+        ↓
+Reranker
+        ↓
+Final Ranking
+        ↓
+Top 5 Documents
+```
+
+The current project uses a learning-purpose custom reranker based on query-word matches.
+
+Important lessons:
+- Higher relevance score must come first.
+- Exact substring matching is brittle.
+- Text should be normalized before matching.
+- The current implementation is educational, not production-grade.
+
+Production systems can use stronger reranking models such as cross-encoders.
+
+---
+
+## 5. Bi-Encoder vs Cross-Encoder
+
+### Bi-Encoder
+
+Query and document are encoded independently.
+
+```text
+Query → Embedding
+Document → Embedding
+Similarity(Query, Document)
+```
+
+Fast and suitable for large-scale candidate retrieval.
+
+### Cross-Encoder
+
+Query and document are evaluated together.
+
+```text
+(Query + Document)
+        ↓
+   Reranker Model
+        ↓
+   Relevance Score
+```
+
+More fine-grained but more expensive, so it is normally applied to a smaller candidate set.
+
+This produces the two-stage architecture:
+
+```text
+Vector Retrieval
+      ↓
+Candidate Set
+      ↓
+Reranking
+      ↓
+Final Documents
+```
+
+---
+
+## 6. Multi-Query Retrieval
+
+Multi-query retrieval generates multiple search queries from one user question.
+
+```text
+Original Question
+        ↓
+MultiQueryGenerator
+        ↓
+Multiple Search Queries
+        ↓
+Multiple Vector Searches
+        ↓
+Merge Results
+        ↓
+Reranker
+        ↓
+Final Documents
+```
+
+The current implementation keeps the original query and adds generated alternatives.
+
+```text
+Original Query
+     +
+3 Alternative Queries
+     ↓
+4 Total Retrieval Queries
+```
+
+`MultiQueryRetriever` creates a Spring AI `SearchRequest` for every query with `topK = 10`, then merges the results.
+
+Basic deduplication currently uses:
+
+```java
+.distinct()
+```
+
+Proper ingestion-level deduplication is intentionally deferred to Day 11.
+
+---
+
+## 7. LLM-Based Multi-Query Generation
+
+The deterministic multi-query generator was replaced with LLM-based query generation.
+
+The LLM is asked to produce three alternative search queries using different wording and important concepts.
+
+The original query is preserved:
+
+```text
+Original Query
++
+3 LLM-generated Queries
+```
+
+### Memory issue discovered
+
+The existing `AiProviderClient` uses conversation memory. Passing:
+
+```java
+conversationId = null
+```
+
+to that memory-enabled method causes an exception because Spring AI's `MessageChatMemoryAdvisor` requires a non-empty conversation ID.
+
+Therefore, multi-query generation needs a dedicated **no-memory LLM call** instead of passing a null conversation ID.
+
+This remains pending at the end of the current implementation.
+
+---
+
+## 8. Hybrid Search
+
+Hybrid Search combines:
+
+```text
+Vector Search
++
+Keyword Search
+```
+
+Conceptually:
+
+```text
+User Query
+     ↓
+ ┌───────────────┐
+ ↓               ↓
+Vector Search   Keyword Search
+ ↓               ↓
+ └───────┬───────┘
+         ↓
+    Result Fusion
+         ↓
+      Reranking
+```
+
+Covered concepts:
+- Vector search is strong for semantic similarity.
+- Keyword search is useful for exact terms and identifiers.
+- Hybrid retrieval combines both signals.
+- Weighted score fusion and Reciprocal Rank Fusion (RRF) can combine results.
+
+### Deferred
+
+Actual Hybrid Search implementation is intentionally deferred to the production vector-store / PGVector stage.
+
+RRF and weighted fusion implementation are also deferred to that stage.
+
+---
+
+## 9. Retrieval Experiments
+
+### Exact terminology test
+
+Query:
+
+```text
+original order ID
+```
+
+Returned the relevant evidence:
+
+```text
+Refund requests must include the original order ID.
+```
+
+This verified the retrieval + reranking pipeline for exact/rare terminology.
+
+### Unsupported question test
+
+Query:
+
+```text
+What is the company's AI hiring policy?
+```
+
+The response correctly stated that the provided context did not contain information about the policy.
+
+This verified grounded behavior and prevented unsupported hallucination.
+
+### Semantic variation test
+
+Query:
+
+```text
+What do I need to submit to get my money back?
+```
+
+The initial deterministic query generation did not reliably retrieve the chunk containing the original order ID.
+
+This exposed a limitation of deterministic query expansion and motivated LLM-based multi-query generation.
+
+The final semantic-variation test remains pending until the no-memory LLM call is fixed.
+
+---
+
+## 10. Current RAG Architecture
+
+```text
+User Question
+      ↓
+QueryTransformer
+      ↓
+MultiQueryGenerator
+      ↓
+Original + Alternative Queries
+      ↓
+MultiQueryRetriever
+      ↓
+Multiple SearchRequest(topK=10)
+      ↓
+Merged Candidate Documents
+      ↓
+DocumentReranker
+      ↓
+Final Top 5 Documents
+      ↓
+ContextBuilder
+      ↓
+LLM
+      ↓
+Answer
+      ↓
+CitationBuilder
+      ↓
+RagResponse
+```
+
+The final user question remains the question sent to the answer-generation prompt. Generated queries are used for retrieval.
+
+---
+
+## 11. Day 10 Boundaries
+
+Not implemented in Day 10:
+- Production-grade neural reranker
+- Hybrid Search implementation
+- RRF implementation
+- Weighted score fusion implementation
+- PGVector integration
+- Ingestion deduplication
+- Re-indexing lifecycle
+- Advanced production retrieval tuning
+
+These are intentionally deferred and must be covered later.
+
+---
+
+## 12. Day 10 Status
+
+### Completed
+
+- Retrieval quality concepts
+- Query transformation
+- Candidate retrieval
+- Two-stage retrieval architecture
+- Reranking
+- Bi-encoder vs cross-encoder
+- Multi-query retrieval
+- LLM-based multi-query generation
+- No-memory multi-query LLM call
+- Multi-query result merging
+- Reranking against multiple queries
+- Exact terminology test
+- Semantic variation test
+- Unsupported-question / grounding test
+- Hybrid Search concepts
+
+### Intentionally Deferred
+
+- Production-grade neural reranker
+- Hybrid Search implementation
+- RRF / weighted fusion
+- PGVector integration
+- Ingestion deduplication
+- Re-indexing lifecycle
+- Advanced production retrieval tuning
+
+### Day 10 Completion
+
+All planned Day 10 implementation and validation tasks are complete.
+
+- No-memory `getMultiQuery()` LLM call implemented.
+- LLM-based multi-query generation verified.
+- Original + generated queries retrieved candidates successfully.
+- Reranker updated to score documents against all generated queries.
+- Semantic-variation test passed.
+- Relevant `original order ID` chunk successfully reached final documents.
+- Grounded final answer and citations verified.
+
+---
+
+## Key Takeaways
+
+1. Retrieval and generation are separate failure points.
+2. A reranker cannot recover documents excluded from the candidate pool.
+3. Multi-query retrieval improves retrieval coverage by searching multiple formulations of the same information need.
+4. The original user query should remain available for final answer generation.
+5. Reranking happens after candidate generation and before final context construction.
+6. Vector and keyword retrieval solve different retrieval problems.
+7. Hybrid Search is better implemented with a production retrieval backend rather than artificially extending SimpleVectorStore.
+8. Grounding correctness depends heavily on retrieval quality.
+9. LLM-based query generation requires careful handling of conversation memory.
+

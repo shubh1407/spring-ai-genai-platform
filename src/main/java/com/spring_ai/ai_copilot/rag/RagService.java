@@ -48,9 +48,17 @@ public class RagService {
 
     private final CitationBuilder citationBuilder;
 
+    private final QueryTransformer queryTransformer;
+
+    private final DocumentReranker  documentReranker;
+
+    private final MultiQueryGenerator multiQueryGenerator;
+
+    private final MultiQueryRetriever  multiQueryRetriever;
+
     private static final Logger log = LoggerFactory.getLogger(RagService.class);
 
-    public RagService(DocumentIngestionService documentIngestionService, DocumentChunkingService documentChunkingService, DocumentEmbeddingService documentEmbeddingService, DocumentVectorStoreService documentVectorStoreService, AiProviderClient aiProviderClient, ContextBuilder ctxBuilder, CitationBuilder citationBuilder) {
+    public RagService(DocumentIngestionService documentIngestionService, DocumentChunkingService documentChunkingService, DocumentEmbeddingService documentEmbeddingService, DocumentVectorStoreService documentVectorStoreService, AiProviderClient aiProviderClient, ContextBuilder ctxBuilder, CitationBuilder citationBuilder, QueryTransformer queryTransformer, DocumentReranker documentReranker, MultiQueryGenerator multiQueryGenerator, MultiQueryRetriever multiQueryRetriever) {
         this.documentIngestionService = documentIngestionService;
         this.documentChunkingService = documentChunkingService;
         this.documentEmbeddingService = documentEmbeddingService;
@@ -58,6 +66,10 @@ public class RagService {
         this.aiProviderClient = aiProviderClient;
         this.ctxBuilder = ctxBuilder;
         this.citationBuilder = citationBuilder;
+        this.queryTransformer = queryTransformer;
+        this.documentReranker = documentReranker;
+        this.multiQueryGenerator = multiQueryGenerator;
+        this.multiQueryRetriever = multiQueryRetriever;
     }
 
     public List<Document> ragDocuments(String path) throws IOException {
@@ -85,14 +97,24 @@ public class RagService {
     }
 
     public RagResponse ask(RagRequest ragRequest) {
+        String transformedQuery = queryTransformer.transform(ragRequest.question());
+        List<String> queries = multiQueryGenerator.generateMultiQuery(transformedQuery);
+        /*
         SearchRequest searchRequest = SearchRequest.builder()
-                .topK(5)
-                .query(ragRequest.question())
+                .topK(10)
+                .query(transformedQuery)
                 .build();
-        List<Document> documents = searchDocuments(searchRequest);
 
-        String context = ctxBuilder.buildContext(documents);
-        log.info("context build for question {} {}", ragRequest.question(), context);
+
+        List<Document> candidate = searchDocuments(searchRequest);
+*/
+        log.info("MultiQueries sending to retrieve vector {}", queries);
+        List<Document> candidates = multiQueryRetriever.searchDocuments(queries);
+
+        List<Document> finalDocuments = documentReranker.rerank(queries,candidates,5);
+
+        String context = ctxBuilder.buildContext(finalDocuments);
+        log.info("context build for question {} {}", transformedQuery, context);
         PromptTemplate promptTemplate = PromptTemplate.builder().template("""
                 You are a helpful AI assistant.
                 
@@ -106,7 +128,7 @@ public class RagService {
 
         String prompt = promptTemplate.render(Map.of("question", ragRequest.question(), "context", context));
         ChatResponse chatResponse=aiProviderClient.getChatResponse(SYSTEM_PROMPT, prompt, ragRequest.conversationId());
-        return new RagResponse(chatResponse.message(),citationBuilder.extractSources(documents));
+        return new RagResponse(chatResponse.message(),citationBuilder.extractSources(finalDocuments));
     }
 
 
