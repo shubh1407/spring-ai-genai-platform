@@ -2,6 +2,7 @@ package com.spring_ai.ai_copilot.controller;
 
 import com.spring_ai.ai_copilot.dto.ChatResponse;
 import com.spring_ai.ai_copilot.dto.RagRequest;
+import com.spring_ai.ai_copilot.dto.RagResponse;
 import com.spring_ai.ai_copilot.rag.*;
 import jakarta.validation.Valid;
 import kotlin.reflect.jvm.internal.impl.metadata.ProtoBuf;
@@ -85,7 +86,7 @@ public class RagController {
     }
 
     @GetMapping("ask")
-    public ChatResponse askQuestion(@Valid @RequestBody RagRequest ragRequest){
+    public RagResponse askQuestion(@Valid @RequestBody RagRequest ragRequest){
         return ragService.ask(ragRequest);
     }
 }

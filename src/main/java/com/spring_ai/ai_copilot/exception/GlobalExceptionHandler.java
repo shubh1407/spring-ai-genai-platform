@@ -34,38 +34,38 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<ErrorResponse> handleNoResourceFound(NoResourceFoundException e) {
-       return buildErrorResponse("RESOURCE_NOT_FOUND", HttpStatus.NOT_FOUND,
-               List.of("Requested resource was not found"), "resource.not.found");
+        return buildErrorResponse("RESOURCE_NOT_FOUND", HttpStatus.NOT_FOUND,
+               List.of("Requested resource was not found"), "resource.not.found", e);
     }
 
     @ExceptionHandler(MissingServletRequestParameterException.class)
     public ResponseEntity<ErrorResponse> handleMissingRequestParameter(MissingServletRequestParameterException e) {
        return buildErrorResponse("VALIDATION_ERROR", HttpStatus.BAD_REQUEST,
-               List.of("Missing required parameter: " + e.getParameterName()), "validation.error");
+               List.of("Missing required parameter: " + e.getParameterName()), "validation.error", e);
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<ErrorResponse> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
        return buildErrorResponse("METHOD_NOT_ALLOWED", HttpStatus.METHOD_NOT_ALLOWED,
-               List.of("HTTP method not allowed"), "method.not.allowed");
+               List.of("HTTP method not allowed"), "method.not.allowed", e);
     }
 
     @ExceptionHandler(HandlerMethodValidationException.class)
     public ResponseEntity<ErrorResponse> handleMethodValidationException(HandlerMethodValidationException e) {
        return buildErrorResponse("VALIDATION_ERROR", HttpStatus.BAD_REQUEST,
-               List.of("Request validation failed"), "validation.error");
+               List.of("Request validation failed"), "validation.error", e);
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorResponse> handleHttpMessageNotReadable(HttpMessageNotReadableException e) {
        return buildErrorResponse("INVALID_JSON", HttpStatus.BAD_REQUEST,
-               List.of("Malformed JSON body"), "invalid.json");
+               List.of("Malformed JSON body"), "invalid.json", e);
     }
 
     @ExceptionHandler(TypeMismatchException.class)
     public ResponseEntity<ErrorResponse> handleTypeMismatch(TypeMismatchException e) {
        return buildErrorResponse("VALIDATION_ERROR", HttpStatus.BAD_REQUEST,
-               List.of("Invalid parameter value"), "validation.error");
+               List.of("Invalid parameter value"), "validation.error", e);
     }
 
     @ExceptionHandler(Exception.class)
@@ -73,11 +73,12 @@ public class GlobalExceptionHandler {
        String errorCode = "INTERNAL_SERVER_ERROR";
        HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
        recordErrorMetrics("application.error", errorCode, status);
-       log.warn("global.exception.handler.failed operation={} status={} errorCode={} exception={}",
+       log.error("global.exception.handler.failed operation={} status={} errorCode={} exception={}",
                "application.error",
                status.value(),
                errorCode,
-               e.getClass().getSimpleName());
+               e.getClass().getSimpleName(),
+               e);
 
        ErrorResponse response = new ErrorResponse(
                LocalDateTime.now(),
@@ -126,11 +127,12 @@ public class GlobalExceptionHandler {
        HttpStatus status = e.getStatus();
        String errorCode = e.getErrorCode();
        recordErrorMetrics("ai.provider.error", errorCode, status);
-       log.warn("global.exception.handler.failed operation={} status={} errorCode={} exception={}",
+       log.error("global.exception.handler.failed operation={} status={} errorCode={} exception={}",
                "ai.provider.error",
                status.value(),
                errorCode,
-               e.getCause() != null ? e.getCause().getClass().getSimpleName() : e.getClass().getSimpleName());
+               e.getCause() != null ? e.getCause().getClass().getSimpleName() : e.getClass().getSimpleName(),
+               e);
 
        ErrorResponse response = new ErrorResponse(
                LocalDateTime.now(),
@@ -185,13 +187,30 @@ public class GlobalExceptionHandler {
                .body(response);
     }
 
-    private ResponseEntity<ErrorResponse> buildErrorResponse(String errorCode, HttpStatus status, List<String> messages, String operation) {
+    private ResponseEntity<ErrorResponse> buildErrorResponse(String errorCode, HttpStatus status, List<String> messages, String operation, Throwable ex) {
        recordErrorMetrics(operation, errorCode, status);
-       log.warn("global.exception.handler.failed operation={} status={} errorCode={} exception={}",
-               operation,
-               status.value(),
-               errorCode,
-               "framework.error");
+       if ("VALIDATION_ERROR".equals(errorCode)) {
+           log.warn("global.exception.handler.failed operation={} status={} errorCode={} exception={}",
+                   operation,
+                   status.value(),
+                   errorCode,
+                   "framework.error");
+       } else {
+           if (ex != null) {
+               log.error("global.exception.handler.failed operation={} status={} errorCode={} exception={}",
+                       operation,
+                       status.value(),
+                       errorCode,
+                       ex.getClass().getSimpleName(),
+                       ex);
+           } else {
+               log.error("global.exception.handler.failed operation={} status={} errorCode={} exception={}",
+                       operation,
+                       status.value(),
+                       errorCode,
+                       "framework.error");
+           }
+       }
 
        ErrorResponse response = new ErrorResponse(
                LocalDateTime.now(),

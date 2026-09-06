@@ -2,11 +2,16 @@ package com.spring_ai.ai_copilot.rag;
 
 import com.spring_ai.ai_copilot.client.AiProviderClient;
 import com.spring_ai.ai_copilot.dto.ChatResponse;
+import com.spring_ai.ai_copilot.dto.Citation;
 import com.spring_ai.ai_copilot.dto.RagRequest;
+import com.spring_ai.ai_copilot.dto.RagResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.reader.JsonReader;
+import org.springframework.ai.reader.TextReader;
+import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.stereotype.Service;
 
@@ -41,15 +46,18 @@ public class RagService {
 
     private final ContextBuilder ctxBuilder;
 
+    private final CitationBuilder citationBuilder;
+
     private static final Logger log = LoggerFactory.getLogger(RagService.class);
 
-    public RagService(DocumentIngestionService documentIngestionService, DocumentChunkingService documentChunkingService, DocumentEmbeddingService documentEmbeddingService, DocumentVectorStoreService documentVectorStoreService, AiProviderClient aiProviderClient, ContextBuilder ctxBuilder) {
+    public RagService(DocumentIngestionService documentIngestionService, DocumentChunkingService documentChunkingService, DocumentEmbeddingService documentEmbeddingService, DocumentVectorStoreService documentVectorStoreService, AiProviderClient aiProviderClient, ContextBuilder ctxBuilder, CitationBuilder citationBuilder) {
         this.documentIngestionService = documentIngestionService;
         this.documentChunkingService = documentChunkingService;
         this.documentEmbeddingService = documentEmbeddingService;
         this.documentVectorStoreService = documentVectorStoreService;
         this.aiProviderClient = aiProviderClient;
         this.ctxBuilder = ctxBuilder;
+        this.citationBuilder = citationBuilder;
     }
 
     public List<Document> ragDocuments(String path) throws IOException {
@@ -76,7 +84,7 @@ public class RagService {
         return documentVectorStoreService.searchWithRequest(searchRequest);
     }
 
-    public ChatResponse ask(RagRequest ragRequest) {
+    public RagResponse ask(RagRequest ragRequest) {
         SearchRequest searchRequest = SearchRequest.builder()
                 .topK(5)
                 .query(ragRequest.question())
@@ -97,6 +105,9 @@ public class RagService {
                 {question}""").build();
 
         String prompt = promptTemplate.render(Map.of("question", ragRequest.question(), "context", context));
-        return aiProviderClient.getChatResponse(SYSTEM_PROMPT, prompt, ragRequest.conversationId());
+        ChatResponse chatResponse=aiProviderClient.getChatResponse(SYSTEM_PROMPT, prompt, ragRequest.conversationId());
+        return new RagResponse(chatResponse.message(),citationBuilder.extractSources(documents));
     }
+
+
 }
