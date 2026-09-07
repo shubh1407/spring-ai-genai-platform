@@ -34,8 +34,8 @@ public class RagController {
     }
 
     @GetMapping("rag")
-    public List<Document> ragDocuments(@RequestParam String path) throws IOException {
-        return ragService.ragDocuments(path);
+    public List<Document> ragDocuments(@RequestParam String path, @RequestParam String tenantId) throws IOException {
+        return ragService.ragDocuments(path,tenantId);
     }
 
     @GetMapping("vector")

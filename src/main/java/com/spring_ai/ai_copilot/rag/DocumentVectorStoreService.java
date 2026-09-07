@@ -4,6 +4,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
 
 import java.util.List;
 
@@ -17,7 +18,9 @@ public class DocumentVectorStoreService {
     }
 
     public void indexDocuments(List<Document> documents){
-        vectorStore.add(documents);
+       if(!CollectionUtils.isEmpty(documents)){
+           vectorStore.add(documents);
+       }
     }
 
     public List<Document> search(String text){
@@ -26,5 +29,11 @@ public class DocumentVectorStoreService {
 
     public List<Document> searchWithRequest(SearchRequest searchRequest){
         return vectorStore.similaritySearch(searchRequest);
+    }
+
+    public void removeOldChunks(SearchRequest searchRequest){
+        if (searchRequest.getFilterExpression() != null) {
+            vectorStore.delete(searchRequest.getFilterExpression());
+        }
     }
 }

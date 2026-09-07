@@ -9,5 +9,7 @@ public record RagRequest(
         String conversationId,
         @NotBlank(message = "Question can't be blank")
         @Size(max = 1000, message = "Question can't be longer than 1000 characters")
-        String question) {
+        String question,
+        @NotBlank(message = "Tenant Id can't be blank")
+        String tenantId) {
 }

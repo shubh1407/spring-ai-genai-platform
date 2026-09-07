@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -19,26 +20,29 @@ public class MultiQueryRetriever {
         this.vectorStoreService = vectorStoreService;
     }
 
-    public List<Document> searchDocuments(List<String> queries) {
+    public List<Document> searchDocuments(List<String> queries, String tenantId) {
+        log.info("Starting multi-query retrieval for tenant {} with {} queries", tenantId, queries.size());
 
-        return queries.stream()
+        List<Document> results = queries.stream()
                 .flatMap(query -> {
                     SearchRequest searchRequest = SearchRequest.builder()
                             .query(query)
+                            .filterExpression(new FilterExpressionBuilder().eq("tenantId", tenantId).build())
                             .topK(10)
                             .build();
 
-                    List<Document> results =
-                            vectorStoreService.searchWithRequest(searchRequest);
+                    List<Document> queryResults = vectorStoreService.searchWithRequest(searchRequest);
+                    log.info("Query [{}] returned {} documents for tenant {}", query, queryResults.size(), tenantId);
 
-                    log.info("Query [{}] returned {} documents", query, results.size());
-
-                    results.forEach(document ->
+                    queryResults.forEach(document ->
                             log.info("Query [{}] -> {}", query, document.getText()));
 
-                    return results.stream();
+                    return queryResults.stream();
                 })
                 .distinct()
                 .toList();
+
+        log.info("Completed multi-query retrieval for tenant {} with {} unique documents", tenantId, results.size());
+        return results;
     }
 }

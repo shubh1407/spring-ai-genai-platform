@@ -2,18 +2,15 @@ package com.spring_ai.ai_copilot.rag;
 
 import com.spring_ai.ai_copilot.client.AiProviderClient;
 import com.spring_ai.ai_copilot.dto.ChatResponse;
-import com.spring_ai.ai_copilot.dto.Citation;
 import com.spring_ai.ai_copilot.dto.RagRequest;
 import com.spring_ai.ai_copilot.dto.RagResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.document.Document;
-import org.springframework.ai.reader.JsonReader;
-import org.springframework.ai.reader.TextReader;
-import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
 
 import java.io.IOException;
 import java.util.List;
@@ -72,63 +69,70 @@ public class RagService {
         this.multiQueryRetriever = multiQueryRetriever;
     }
 
-    public List<Document> ragDocuments(String path) throws IOException {
-        List<Document> documents = documentIngestionService.getDocuments(path);
-        log.info("Found {} raw documents", documents.size());
+    public List<Document> ragDocuments(String path, String tenantId) throws IOException {
+        log.info("Starting document ingestion for path {} and tenant {}", path, tenantId);
+        List<Document> documents = documentIngestionService.getDocuments(path, tenantId);
+        log.info("Found {} raw documents for tenant {}", documents.size(), tenantId);
         List<Document> chunkedDocuments = documentChunkingService.chunkDocuments(documents);
-        log.info("chunkedDocuments = {}", chunkedDocuments.size());
+        log.info("Chunked {} raw documents into {} chunks for tenant {}", documents.size(), chunkedDocuments.size(), tenantId);
         // Just for learning purpose creating embeddings but actually we can create vectors and store it in VectorStorage
         //List<float[]> vectors= documentEmbeddingService.getVectorsForDocument(chunkedDocuments);
         //log.info("vectors = {}", vectors.size());
         documentVectorStoreService.indexDocuments(chunkedDocuments);
+        documents.stream().forEach(document -> {
+            if(document != null) {
+                Map<String,Object> metaData=document.getMetadata();
+                documentIngestionService.registerDocuments(tenantId, metaData.get("filename").toString(), metaData.get("contentHash").toString());
+            }
+        });
+        log.info("Indexed {} chunks for tenant {} into vector store", chunkedDocuments.size(), tenantId);
         return chunkedDocuments;
     }
 
     public float[] getVectors(String text) throws IOException {
+        log.info("Generating embedding vectors for input text of length {}", text.length());
         return documentEmbeddingService.getVectorsForText(text);
     }
 
     public List<Document> searchDocuments(String query) {
+        log.info("Searching vector store for query {}", query);
         return documentVectorStoreService.search(query);
     }
 
     public List<Document> searchDocuments(SearchRequest searchRequest) {
+        log.info("Searching vector store with structured request {}", searchRequest);
         return documentVectorStoreService.searchWithRequest(searchRequest);
     }
 
     public RagResponse ask(RagRequest ragRequest) {
+        log.info("Handling RAG ask for tenant {} and conversation {}", ragRequest.tenantId(), ragRequest.conversationId());
         String transformedQuery = queryTransformer.transform(ragRequest.question());
+        log.info("Transformed question for tenant {}: {}", ragRequest.tenantId(), transformedQuery);
         List<String> queries = multiQueryGenerator.generateMultiQuery(transformedQuery);
-        /*
-        SearchRequest searchRequest = SearchRequest.builder()
-                .topK(10)
-                .query(transformedQuery)
-                .build();
+        log.info("Generated {} multi-queries for tenant {}: {}", queries.size(), ragRequest.tenantId(), queries);
+        List<Document> candidates = multiQueryRetriever.searchDocuments(queries, ragRequest.tenantId());
+        log.info("Retrieved {} candidate documents for tenant {} before reranking", candidates.size(), ragRequest.tenantId());
 
-
-        List<Document> candidate = searchDocuments(searchRequest);
-*/
-        log.info("MultiQueries sending to retrieve vector {}", queries);
-        List<Document> candidates = multiQueryRetriever.searchDocuments(queries);
-
-        List<Document> finalDocuments = documentReranker.rerank(queries,candidates,5);
+        List<Document> finalDocuments = documentReranker.rerank(queries, candidates, 5);
+        log.info("Reranked to {} final context documents for tenant {}", finalDocuments.size(), ragRequest.tenantId());
 
         String context = ctxBuilder.buildContext(finalDocuments);
-        log.info("context build for question {} {}", transformedQuery, context);
+        log.info("Built context for question {} with {} characters for tenant {}", transformedQuery, context.length(), ragRequest.tenantId());
         PromptTemplate promptTemplate = PromptTemplate.builder().template("""
                 You are a helpful AI assistant.
-                
+                 
                 Answer the user's question using the provided context.
-                
+                 
                 Context:
                 {context}
-                
+                 
                 Question:
                 {question}""").build();
 
         String prompt = promptTemplate.render(Map.of("question", ragRequest.question(), "context", context));
-        ChatResponse chatResponse=aiProviderClient.getChatResponse(SYSTEM_PROMPT, prompt, ragRequest.conversationId());
-        return new RagResponse(chatResponse.message(),citationBuilder.extractSources(finalDocuments));
+        ChatResponse chatResponse = aiProviderClient.getChatResponse(SYSTEM_PROMPT, prompt, ragRequest.conversationId());
+        log.info("Received AI response for tenant {} and conversation {}", ragRequest.tenantId(), ragRequest.conversationId());
+        return new RagResponse(chatResponse.message(), citationBuilder.extractSources(finalDocuments));
     }
 
 

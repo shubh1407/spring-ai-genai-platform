@@ -4284,3 +4284,834 @@ All planned Day 10 implementation and validation tasks are complete.
 8. Grounding correctness depends heavily on retrieval quality.
 9. LLM-based query generation requires careful handling of conversation memory.
 
+# P2 — Day 11: Ingestion Lifecycle, Deduplication & Re-indexing
+
+## Objective
+
+Day 11 ka goal RAG ingestion pipeline ko duplicate indexing aur document updates handle karne layak banana tha.
+
+Basic ingestion:
+
+```text
+File
+ ↓
+Read Document
+ ↓
+Chunk
+ ↓
+Embed
+ ↓
+Vector Store
+```
+
+Lifecycle-aware ingestion:
+
+```text
+File
+ ↓
+Content Hash
+ ↓
+Document Registry
+ ↓
+Already indexed?
+ ├── YES → Skip
+ └── NO
+      ↓
+   Existing file?
+      ↓
+   Remove old chunks
+      ↓
+   Read new document
+      ↓
+   Chunk
+      ↓
+   Embed
+      ↓
+   Index
+      ↓
+   Register new hash
+```
+
+---
+
+## 1. Why Ingestion Lifecycle Is Required
+
+A basic ingestion endpoint can accidentally index the same document every time it is called.
+
+Example:
+
+```text
+First ingestion
+company-policy.txt
+→ 4 chunks
+→ index
+
+Second ingestion
+company-policy.txt
+→ 4 more chunks
+→ index again
+```
+
+This can create duplicate chunks in the vector store.
+
+Problems:
+
+- duplicate retrieval results
+- noisy ranking
+- unnecessarily large context
+- unnecessary embedding/API cost
+- duplicate citations
+- stale document versions remaining in the store
+
+Therefore, ingestion needs lifecycle management.
+
+---
+
+## 2. Content Hash
+
+The current content of a document is converted into a hash.
+
+```text
+company-policy.txt
+        ↓
+content
+        ↓
+content hash
+        ↓
+38a71518f702c34c4962ce8a1827d8bd
+```
+
+Same content produces the same hash:
+
+```text
+Same content
+    ↓
+Same hash
+    ↓
+Skip re-indexing
+```
+
+Changed content produces a different hash:
+
+```text
+Old content → Old hash
+New content → New hash
+
+Old hash != New hash
+    ↓
+Document updated
+```
+
+> Content hashing detects document-version changes. It is not a replacement for semantic/vector similarity search.
+
+---
+
+## 3. Document Registry
+
+A `DocumentRegistry` was introduced to track the currently indexed version of each document.
+
+Prototype structure:
+
+```text
+tenantId + fileName
+        ↓
+current contentHash
+```
+
+Example:
+
+```text
+tenant-1:company-policy.txt → 38a71518...
+tenant-2:company-policy.txt → 38a71518...
+```
+
+The same filename can therefore exist independently for different tenants.
+
+---
+
+## 4. Registry Implementation
+
+Current prototype:
+
+```java
+@Component
+public class DocumentRegistry {
+
+    private final Map<String, String> documents =
+            new ConcurrentHashMap<>();
+
+    public boolean exists(
+            String tenantId,
+            String fileName,
+            String contentHash) {
+
+        String key = buildKey(tenantId, fileName);
+
+        return contentHash.equals(documents.get(key));
+    }
+
+    public void register(
+            String tenantId,
+            String fileName,
+            String contentHash) {
+
+        documents.put(
+                buildKey(tenantId, fileName),
+                contentHash
+        );
+    }
+
+    private String buildKey(
+            String tenantId,
+            String fileName) {
+
+        return tenantId + ":" + fileName;
+    }
+}
+```
+
+The registry stores the **current hash** for a file. When a file is updated, the current version replaces the previous version.
+
+---
+
+## 5. Same File + Same Hash
+
+If the same tenant processes the same file again without changing its content:
+
+```text
+tenant = 2
+file = company-policy.txt
+hash = same
+```
+
+The registry returns:
+
+```text
+already ingested = true
+```
+
+The file is skipped:
+
+```text
+already indexed
+     ↓
+SKIP
+     ↓
+No chunking
+No embedding
+No vector indexing
+```
+
+Observed behavior:
+
+```text
+File company-policy.txt for tenant 2
+is already ingested
+
+Skipping already ingested file company-policy.txt
+```
+
+Final result:
+
+```text
+Found 0 documents
+Chunked 0 documents
+Indexed 0 chunks
+```
+
+This confirms duplicate re-indexing is avoided.
+
+---
+
+## 6. Multiple Files in One Ingestion Scan
+
+The ingestion pipeline processes each file independently.
+
+```text
+knowledge/
+├── company-policy.txt
+├── company.json
+└── company.pdf
+```
+
+If all are unchanged:
+
+```text
+company-policy.txt → SKIP
+company.json       → SKIP
+company.pdf        → SKIP
+```
+
+Result:
+
+```text
+0 raw documents
+0 chunks
+0 indexed chunks
+```
+
+If only one changes:
+
+```text
+company-policy.txt → RE-INDEX
+company.json       → SKIP
+company.pdf        → SKIP
+```
+
+Only the changed document incurs chunking, embedding and indexing work.
+
+---
+
+## 7. Document Update Detection
+
+For the update test, `company-policy.txt` was modified.
+
+Previous hash:
+
+```text
+38a71518f702c34c4962ce8a1827d8bd
+```
+
+New hash:
+
+```text
+b941faec5eb2b3b1a91b6daad89fbaf5
+```
+
+Therefore:
+
+```text
+old hash != new hash
+```
+
+The lifecycle correctly identified the document as updated.
+
+---
+
+## 8. Re-indexing Flow
+
+For the updated `company-policy.txt`:
+
+```text
+New content
+    ↓
+New content hash
+    ↓
+Hash mismatch
+    ↓
+Remove previously indexed chunks
+    ↓
+Read new document
+    ↓
+Chunk document
+    ↓
+Generate embeddings
+    ↓
+Index new chunks
+    ↓
+Register new hash
+```
+
+Observed logs confirmed:
+
+```text
+Removing previously indexed chunks
+Completed chunk cleanup
+Prepared 1 documents
+```
+
+Then:
+
+```text
+Splitting up document into 4 chunks.
+Chunked documents: 4
+```
+
+Four embeddings were generated, followed by:
+
+```text
+Indexed 4 chunks
+```
+
+Therefore the complete update/re-indexing flow was successfully verified.
+
+---
+
+## 9. Old Chunks Must Be Removed
+
+Simply indexing the updated document is not enough.
+
+Incorrect:
+
+```text
+Old chunks
+    +
+New chunks
+    ↓
+Vector Store
+```
+
+This leaves stale information in retrieval.
+
+Correct:
+
+```text
+Old chunks
+    ↓
+DELETE
+    ↓
+New chunks
+    ↓
+INDEX
+```
+
+Otherwise RAG could retrieve conflicting versions such as:
+
+```text
+30 days
+45 days
+```
+
+and the LLM could receive both.
+
+Therefore old-chunk cleanup is an essential part of document update handling.
+
+---
+
+## 10. DocumentLifeCycleService
+
+Lifecycle responsibilities were separated into `DocumentLifeCycleService`.
+
+Conceptually:
+
+```text
+DocumentIngestionService
+        ↓
+DocumentLifeCycleService
+        ↓
+DocumentRegistry
+```
+
+Responsibilities include:
+
+- checking whether the current document version is already ingested
+- registering the current document version
+- removing previously indexed chunks when a document changes
+
+This keeps document reading and lifecycle decisions more clearly separated.
+
+---
+
+## 11. Important Mistake: Using Vector Search for Existence Checking
+
+An earlier implementation attempted to determine whether a document existed using vector-store similarity search with only metadata filtering.
+
+This resulted in:
+
+```text
+No embedding input is provided
+```
+
+### Why?
+
+Similarity search requires a query:
+
+```text
+User/query text
+      ↓
+Query embedding
+      ↓
+Similarity search
+```
+
+But document existence checking is not a similarity problem.
+
+For lifecycle checking we need:
+
+```text
+tenantId
++
+file identity
++
+contentHash
+```
+
+Therefore:
+
+> Metadata/document existence checks should use a registry/database lookup, not vector similarity search.
+
+The vector store remains responsible for semantic retrieval.
+
+---
+
+## 12. Deduplication vs Retrieval
+
+These are two different problems.
+
+### Ingestion Deduplication
+
+Question:
+
+> Have I already indexed this exact document version?
+
+Uses:
+
+```text
+tenantId
++
+file identity
++
+contentHash
+```
+
+Handled by:
+
+```text
+Document Registry
+```
+
+### Semantic Retrieval
+
+Question:
+
+> Which documents are relevant to this user query?
+
+Uses:
+
+```text
+query
++
+embedding
++
+similarity
+```
+
+Handled by:
+
+```text
+Vector Store
+```
+
+Mental model:
+
+```text
+Deduplication
+    ↓
+Document Registry
+
+Retrieval
+    ↓
+Vector Store
+```
+
+---
+
+## 13. Tenant Isolation
+
+The document registry is tenant-aware.
+
+Example:
+
+```text
+Tenant 1
+company-policy.txt
+hash = ABC
+
+Tenant 2
+company-policy.txt
+hash = ABC
+```
+
+These are separate registry entries:
+
+```text
+tenant1:company-policy.txt
+tenant2:company-policy.txt
+```
+
+Therefore tenant 2 does not inherit tenant 1's ingestion state.
+
+---
+
+## 14. Tenant Isolation Test
+
+Multiple tenants were tested.
+
+Tenant 1:
+
+```text
+3 files
+11 chunks
+```
+
+Tenant 2:
+
+```text
+same files/content
+→ independently indexed
+```
+
+Tenant 3:
+
+```text
+no indexed documents
+→ 0 retrieved documents
+```
+
+Retrieval also applies the tenant filter to each multi-query retrieval request.
+
+Result:
+
+```text
+Tenant 1 → Tenant 1 documents
+Tenant 2 → Tenant 2 documents
+Tenant 3 → No documents
+```
+
+Tenant-level retrieval isolation was successfully verified in the current prototype.
+
+---
+
+## 15. Current Prototype vs Production
+
+Current implementation:
+
+```text
+DocumentRegistry
+      ↓
+ConcurrentHashMap
+```
+
+This is intentionally an in-memory prototype.
+
+If the application restarts:
+
+```text
+Application restart
+       ↓
+In-memory registry lost
+```
+
+A production implementation should persist lifecycle state in a database.
+
+Conceptually:
+
+```text
+PostgreSQL
+   ↓
+Document Registry
+   ↓
+tenant_id
+source
+file_name
+content_hash
+version
+status
+created_at
+updated_at
+```
+
+The database-backed registry is a production-stage concern and is not part of this Day 11 prototype.
+
+---
+
+## 16. Runtime Resource Testing Note
+
+The application loads knowledge files from the runtime classpath.
+
+During the update test, the source resource was changed but the already-running application was still using the existing runtime copy under:
+
+```text
+target/classes/knowledge/
+```
+
+Therefore the first source-file change was not visible to the running application.
+
+After updating the runtime resource, the new hash was detected:
+
+```text
+OLD
+38a71518f702c34c4962ce8a1827d8bd
+
+NEW
+b941faec5eb2b3b1a91b6daad89fbaf5
+```
+
+This was a development/runtime-resource issue, not a bug in the lifecycle logic.
+
+In production, documents would normally come from external storage, a database, or object storage rather than manually modifying compiled classpath resources.
+
+---
+
+# Day 11 Final Architecture
+
+```text
+                    ┌─────────────────────┐
+                    │        File         │
+                    └──────────┬──────────┘
+                               ↓
+                    ┌─────────────────────┐
+                    │ Document Ingestion  │
+                    └──────────┬──────────┘
+                               ↓
+                    ┌─────────────────────┐
+                    │   Content Hash      │
+                    └──────────┬──────────┘
+                               ↓
+                    ┌─────────────────────┐
+                    │ Document Lifecycle  │
+                    └──────────┬──────────┘
+                               ↓
+                    ┌─────────────────────┐
+                    │ Document Registry   │
+                    └──────────┬──────────┘
+                               │
+                    ┌──────────┴──────────┐
+                    ↓                     ↓
+                 Same hash            New hash
+                    ↓                     ↓
+                  SKIP              Remove old chunks
+                                          ↓
+                                   Read document
+                                          ↓
+                                      Chunking
+                                          ↓
+                                     Embedding
+                                          ↓
+                                    Vector Store
+                                          ↓
+                                   Register hash
+```
+
+---
+
+# Day 11 Tests
+
+## Test 1 — Same File + Same Content
+
+```text
+Tenant 2
+company-policy.txt
+same hash
+```
+
+Result:
+
+```text
+PASS ✅
+File skipped
+```
+
+## Test 2 — Multiple Unchanged Files
+
+```text
+company-policy.txt → SKIP
+company.json       → SKIP
+company.pdf        → SKIP
+```
+
+Result:
+
+```text
+PASS ✅
+0 documents indexed
+```
+
+## Test 3 — Tenant Isolation
+
+```text
+Tenant 1 → own documents
+Tenant 2 → own documents
+Tenant 3 → no documents
+```
+
+Result:
+
+```text
+PASS ✅
+```
+
+## Test 4 — Updated Document
+
+```text
+company-policy.txt
+
+old hash != new hash
+```
+
+Result:
+
+```text
+PASS ✅
+Update detected
+```
+
+## Test 5 — Old Chunk Cleanup
+
+```text
+Old chunks
+    ↓
+Removed
+```
+
+Result:
+
+```text
+PASS ✅
+```
+
+## Test 6 — Re-indexing
+
+```text
+New document
+    ↓
+4 chunks
+    ↓
+4 embeddings
+    ↓
+Indexed
+```
+
+Result:
+
+```text
+PASS ✅
+```
+
+---
+
+# Key Takeaways
+
+1. RAG ingestion needs lifecycle management.
+2. Content hashing detects unchanged vs changed document versions.
+3. Same hash → skip unnecessary ingestion.
+4. Changed hash → re-index the document.
+5. Old chunks must be removed before indexing the updated version.
+6. Document existence should not be checked using vector similarity search.
+7. A document registry is better suited for ingestion state.
+8. Registry identity must include tenant information in a multi-tenant system.
+9. Deduplication and semantic retrieval solve different problems.
+10. The in-memory registry is suitable for the prototype but not durable production storage.
+11. Only changed documents should incur chunking, embedding and indexing work.
+12. Tenant filtering must be applied during retrieval to prevent cross-tenant data access.
+
+---
+
+# Day 11 Status
+
+**COMPLETE ✅**
+
+Implemented and tested:
+
+- Content-hash based change detection
+- Duplicate ingestion prevention
+- Document registry
+- Tenant-aware registry
+- Old chunk cleanup
+- Document update detection
+- Re-indexing
+- New embedding generation
+- Tenant isolation
+- Unchanged-file skipping
+
+**P2 Day 11 — COMPLETE 🔒**
