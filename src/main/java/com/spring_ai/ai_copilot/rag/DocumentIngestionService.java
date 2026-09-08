@@ -1,9 +1,7 @@
 package com.spring_ai.ai_copilot.rag;
 
-import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
-import com.spring_ai.ai_copilot.exception.AiProviderException;
 import com.spring_ai.ai_copilot.exception.UnsupportedDocumentTypeException;
-import com.spring_ai.ai_copilot.service.ChatService;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -13,16 +11,14 @@ import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.core.io.support.ResourcePatternResolver;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
 import org.springframework.util.StringUtils;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class DocumentIngestionService {
@@ -30,28 +26,41 @@ public class DocumentIngestionService {
     private static final Logger log = LoggerFactory.getLogger(DocumentIngestionService.class);
 
     private final DocumentLifeCycleService documentLifeCycleService;
+    private final MeterRegistry meterRegistry;
 
-    public DocumentIngestionService(DocumentLifeCycleService documentLifeCycleService) {
+    public DocumentIngestionService(DocumentLifeCycleService documentLifeCycleService, MeterRegistry meterRegistry) {
         this.documentLifeCycleService = documentLifeCycleService;
+        this.meterRegistry = meterRegistry;
     }
 
     public List<Document> getDocuments(String path, String tenantId) throws IOException {
+        long startedAt = System.nanoTime();
+        log.info("rag.ingestion.started operation=ingestion path={} tenant={}", path, tenantId);
 
-        log.info("Getting documents from {} for tenant {}", path, tenantId);
         List<Document> documents = new ArrayList<>();
         ResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
         Resource[] resources = resolver.getResources("classpath:/" + path + "/*");
-        log.info("Discovered {} files for path {} in tenant {}", resources.length, path, tenantId);
+        log.info("rag.ingestion.discovered operation=ingestion path={} tenant={} files={}", path, tenantId, resources.length);
 
+        int skippedFiles = 0;
+        int updatedFiles = 0;
         List<Document> retrievedDocs;
         for (Resource resource : resources) {
             retrievedDocs = getDocumentsFromFile(resource, tenantId);
             if (retrievedDocs != null) {
                 documents.addAll(retrievedDocs);
+                updatedFiles++;
+            } else {
+                skippedFiles++;
             }
         }
 
-        log.info("Found {} documents for tenant {} after ingestion scan", documents.size(), tenantId);
+        long durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+        meterRegistry.counter("rag.ingestion.count", "status", "success").increment();
+        meterRegistry.timer("rag.ingestion.duration", "status", "success").record(durationMs, TimeUnit.MILLISECONDS);
+        meterRegistry.counter("rag.ingestion.skipped", "status", "success").increment(skippedFiles);
+        meterRegistry.counter("rag.ingestion.updated", "status", "success").increment(updatedFiles);
+        log.info("rag.ingestion.completed operation=ingestion tenant={} discovered={} updated={} skipped={} documents={} durationMs={} status=success", tenantId, resources.length, updatedFiles, skippedFiles, documents.size(), durationMs);
         return documents;
     }
 
@@ -60,16 +69,15 @@ public class DocumentIngestionService {
         String ext = StringUtils.getFilenameExtension(resource.getFilename());
 
         if (ext == null) {
-            log.error("Extension is invalid for resource {} and tenant {}", resource.getFilename(), tenantId);
+            log.error("rag.ingestion.failed operation=ingestion resource={} tenant={} errorCode=RAG_VALIDATION_ERROR exception=unsupported.document.type", resource.getFilename(), tenantId);
             throw new UnsupportedDocumentTypeException("file format is not defined");
         }
 
-        log.info("Processing file {} with extension {} for tenant {}", resource.getFilename(), ext, tenantId);
+        log.info("rag.ingestion.file.started operation=ingestion resource={} extension={} tenant={}", resource.getFilename(), ext, tenantId);
 
         String contentHash = DigestUtils.md5DigestAsHex(
                 resource.getInputStream().readAllBytes()
         );
-        log.info("Computed content hash for {} for tenant {}", resource.getFilename(), tenantId);
 
         List<Document> documents = switch (ext.toLowerCase()) {
             case "txt" -> new TextReader(resource).read();
@@ -80,7 +88,8 @@ public class DocumentIngestionService {
 
         boolean isFileExist = documentLifeCycleService.isFileAlreadyIngested(contentHash, resource.getFilename(), tenantId);
         if (isFileExist) {
-            log.info("Skipping already ingested file {} for tenant {}", resource.getFilename(), tenantId);
+            meterRegistry.counter("rag.ingestion.skipped", "status", "duplicate").increment();
+            log.info("rag.ingestion.file.skipped operation=ingestion resource={} tenant={} reason=already.ingested", resource.getFilename(), tenantId);
             return null;
         }
 
@@ -93,11 +102,12 @@ public class DocumentIngestionService {
             document.getMetadata().put("tenantId", tenantId);
         });
 
-        log.info("Prepared {} documents from {} for tenant {}", documents.size(), resource.getFilename(), tenantId);
+        log.info("rag.ingestion.file.completed operation=ingestion resource={} tenant={} documents={} status=success", resource.getFilename(), tenantId, documents.size());
         return documents;
     }
 
     public void registerDocuments(String tenantId, String fileName, String contentHash){
+        log.info("rag.ingestion.registered operation=ingestion tenant={} file={} status=success", tenantId, fileName);
         documentLifeCycleService.registerDocuments(tenantId, fileName, contentHash);
     }
 }

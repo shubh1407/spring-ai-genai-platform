@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 public class RagController {
@@ -88,5 +89,14 @@ public class RagController {
     @GetMapping("ask")
     public RagResponse askQuestion(@Valid @RequestBody RagRequest ragRequest){
         return ragService.ask(ragRequest);
+    }
+
+    @GetMapping("evaluation")
+    public Map<String, Object> evaluate(
+            @RequestParam String tenantId,
+            @RequestParam String question,
+            @RequestParam(required = false) String expectedSources,
+            @RequestParam(defaultValue = "5") int topK) {
+        return ragService.evaluate(tenantId, question, expectedSources, topK);
     }
 }

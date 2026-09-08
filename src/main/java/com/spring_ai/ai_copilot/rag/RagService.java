@@ -2,20 +2,24 @@ package com.spring_ai.ai_copilot.rag;
 
 import com.spring_ai.ai_copilot.client.AiProviderClient;
 import com.spring_ai.ai_copilot.dto.ChatResponse;
+import com.spring_ai.ai_copilot.dto.Citation;
 import com.spring_ai.ai_copilot.dto.RagRequest;
 import com.spring_ai.ai_copilot.dto.RagResponse;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.stereotype.Service;
-import org.springframework.util.CollectionUtils;
 
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class RagService {
@@ -32,30 +36,21 @@ public class RagService {
             instructions.""";
 
     private final DocumentIngestionService documentIngestionService;
-
     private final DocumentChunkingService documentChunkingService;
-
     private final DocumentEmbeddingService documentEmbeddingService;
-
     private final DocumentVectorStoreService documentVectorStoreService;
-
     private final AiProviderClient aiProviderClient;
-
     private final ContextBuilder ctxBuilder;
-
     private final CitationBuilder citationBuilder;
-
     private final QueryTransformer queryTransformer;
-
-    private final DocumentReranker  documentReranker;
-
+    private final DocumentReranker documentReranker;
     private final MultiQueryGenerator multiQueryGenerator;
-
-    private final MultiQueryRetriever  multiQueryRetriever;
+    private final MultiQueryRetriever multiQueryRetriever;
+    private final MeterRegistry meterRegistry;
 
     private static final Logger log = LoggerFactory.getLogger(RagService.class);
 
-    public RagService(DocumentIngestionService documentIngestionService, DocumentChunkingService documentChunkingService, DocumentEmbeddingService documentEmbeddingService, DocumentVectorStoreService documentVectorStoreService, AiProviderClient aiProviderClient, ContextBuilder ctxBuilder, CitationBuilder citationBuilder, QueryTransformer queryTransformer, DocumentReranker documentReranker, MultiQueryGenerator multiQueryGenerator, MultiQueryRetriever multiQueryRetriever) {
+    public RagService(DocumentIngestionService documentIngestionService, DocumentChunkingService documentChunkingService, DocumentEmbeddingService documentEmbeddingService, DocumentVectorStoreService documentVectorStoreService, AiProviderClient aiProviderClient, ContextBuilder ctxBuilder, CitationBuilder citationBuilder, QueryTransformer queryTransformer, DocumentReranker documentReranker, MultiQueryGenerator multiQueryGenerator, MultiQueryRetriever multiQueryRetriever, MeterRegistry meterRegistry) {
         this.documentIngestionService = documentIngestionService;
         this.documentChunkingService = documentChunkingService;
         this.documentEmbeddingService = documentEmbeddingService;
@@ -67,73 +62,153 @@ public class RagService {
         this.documentReranker = documentReranker;
         this.multiQueryGenerator = multiQueryGenerator;
         this.multiQueryRetriever = multiQueryRetriever;
+        this.meterRegistry = meterRegistry;
     }
 
     public List<Document> ragDocuments(String path, String tenantId) throws IOException {
-        log.info("Starting document ingestion for path {} and tenant {}", path, tenantId);
+        log.info("rag.ingestion.request.started operation=ingestion path={} tenant={}", path, tenantId);
         List<Document> documents = documentIngestionService.getDocuments(path, tenantId);
-        log.info("Found {} raw documents for tenant {}", documents.size(), tenantId);
+        log.info("rag.ingestion.request.documentsFound operation=ingestion tenant={} rawDocuments={}", tenantId, documents.size());
         List<Document> chunkedDocuments = documentChunkingService.chunkDocuments(documents);
-        log.info("Chunked {} raw documents into {} chunks for tenant {}", documents.size(), chunkedDocuments.size(), tenantId);
-        // Just for learning purpose creating embeddings but actually we can create vectors and store it in VectorStorage
-        //List<float[]> vectors= documentEmbeddingService.getVectorsForDocument(chunkedDocuments);
-        //log.info("vectors = {}", vectors.size());
+        log.info("rag.ingestion.request.chunked operation=ingestion tenant={} inputDocuments={} outputChunks={}", tenantId, documents.size(), chunkedDocuments.size());
         documentVectorStoreService.indexDocuments(chunkedDocuments);
-        documents.stream().forEach(document -> {
-            if(document != null) {
-                Map<String,Object> metaData=document.getMetadata();
-                documentIngestionService.registerDocuments(tenantId, metaData.get("filename").toString(), metaData.get("contentHash").toString());
+        documents.forEach(document -> {
+            if (document != null) {
+               Map<String, Object> metaData = document.getMetadata();
+               documentIngestionService.registerDocuments(tenantId, metaData.get("filename").toString(), metaData.get("contentHash").toString());
             }
         });
-        log.info("Indexed {} chunks for tenant {} into vector store", chunkedDocuments.size(), tenantId);
+        log.info("rag.ingestion.request.completed operation=ingestion tenant={} indexedChunks={} status=success", tenantId, chunkedDocuments.size());
         return chunkedDocuments;
     }
 
     public float[] getVectors(String text) throws IOException {
-        log.info("Generating embedding vectors for input text of length {}", text.length());
+        log.info("rag.embedding.started operation=embedding inputLength={}", text.length());
         return documentEmbeddingService.getVectorsForText(text);
     }
 
     public List<Document> searchDocuments(String query) {
-        log.info("Searching vector store for query {}", query);
+        log.info("rag.vector.search.started operation=vector.search query={}", query);
         return documentVectorStoreService.search(query);
     }
 
     public List<Document> searchDocuments(SearchRequest searchRequest) {
-        log.info("Searching vector store with structured request {}", searchRequest);
+        log.info("rag.vector.search.started operation=vector.search.structured query={} topK={}", searchRequest.getQuery(), searchRequest.getTopK());
         return documentVectorStoreService.searchWithRequest(searchRequest);
     }
 
     public RagResponse ask(RagRequest ragRequest) {
-        log.info("Handling RAG ask for tenant {} and conversation {}", ragRequest.tenantId(), ragRequest.conversationId());
-        String transformedQuery = queryTransformer.transform(ragRequest.question());
-        log.info("Transformed question for tenant {}: {}", ragRequest.tenantId(), transformedQuery);
-        List<String> queries = multiQueryGenerator.generateMultiQuery(transformedQuery);
-        log.info("Generated {} multi-queries for tenant {}: {}", queries.size(), ragRequest.tenantId(), queries);
-        List<Document> candidates = multiQueryRetriever.searchDocuments(queries, ragRequest.tenantId());
-        log.info("Retrieved {} candidate documents for tenant {} before reranking", candidates.size(), ragRequest.tenantId());
+        long startedAt = System.nanoTime();
+        log.info("rag.ask.started operation=ask tenant={} conversationId={}", ragRequest.tenantId(), ragRequest.conversationId());
+        try {
+            String transformedQuery = queryTransformer.transform(ragRequest.question());
+            log.info("rag.ask.query.transform.completed operation=ask tenant={} questionLength={} status=success", ragRequest.tenantId(), transformedQuery.length());
 
-        List<Document> finalDocuments = documentReranker.rerank(queries, candidates, 5);
-        log.info("Reranked to {} final context documents for tenant {}", finalDocuments.size(), ragRequest.tenantId());
+            List<String> queries = multiQueryGenerator.generateMultiQuery(transformedQuery);
+            log.info("rag.ask.multi.query.completed operation=ask tenant={} queryCount={} status=success", ragRequest.tenantId(), queries.size());
 
-        String context = ctxBuilder.buildContext(finalDocuments);
-        log.info("Built context for question {} with {} characters for tenant {}", transformedQuery, context.length(), ragRequest.tenantId());
-        PromptTemplate promptTemplate = PromptTemplate.builder().template("""
+            List<Document> candidates = multiQueryRetriever.searchDocuments(queries, ragRequest.tenantId());
+            log.info("rag.ask.retrieval.completed operation=ask tenant={} candidateCount={} status=success", ragRequest.tenantId(), candidates.size());
+
+            List<Document> finalDocuments = documentReranker.rerank(queries, candidates, 5);
+            log.info("rag.ask.reranking.completed operation=ask tenant={} finalDocuments={} status=success", ragRequest.tenantId(), finalDocuments.size());
+
+            String context = ctxBuilder.buildContext(finalDocuments);
+            log.info("rag.ask.context.completed operation=ask tenant={} contextLength={} status=success", ragRequest.tenantId(), context.length());
+
+            PromptTemplate promptTemplate = PromptTemplate.builder().template("""
                 You are a helpful AI assistant.
-                 
+                  
                 Answer the user's question using the provided context.
-                 
+                  
                 Context:
                 {context}
-                 
+                  
                 Question:
                 {question}""").build();
 
-        String prompt = promptTemplate.render(Map.of("question", ragRequest.question(), "context", context));
-        ChatResponse chatResponse = aiProviderClient.getChatResponse(SYSTEM_PROMPT, prompt, ragRequest.conversationId());
-        log.info("Received AI response for tenant {} and conversation {}", ragRequest.tenantId(), ragRequest.conversationId());
-        return new RagResponse(chatResponse.message(), citationBuilder.extractSources(finalDocuments));
+            String prompt = promptTemplate.render(Map.of("question", ragRequest.question(), "context", context));
+            ChatResponse chatResponse = aiProviderClient.getChatResponse(SYSTEM_PROMPT, prompt, ragRequest.conversationId());
+            log.info("rag.ask.llm.completed operation=ask tenant={} conversationId={} status=success", ragRequest.tenantId(), ragRequest.conversationId());
+
+            List<Citation> citations = citationBuilder.extractSources(finalDocuments);
+            log.info("rag.ask.citations.completed operation=ask tenant={} citations={} status=success", ragRequest.tenantId(), citations.size());
+
+            long durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            meterRegistry.counter("rag.ask.count", "status", "success").increment();
+            meterRegistry.timer("rag.ask.duration", "status", "success").record(durationMs, TimeUnit.MILLISECONDS);
+            log.info("rag.ask.completed operation=ask tenant={} conversationId={} durationMs={} status=success", ragRequest.tenantId(), ragRequest.conversationId(), durationMs);
+            return new RagResponse(chatResponse.message(), citations);
+        } catch (Exception e) {
+            long durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            meterRegistry.counter("rag.ask.count", "status", "failure").increment();
+            meterRegistry.counter("rag.ask.failure", "status", "failure").increment();
+            meterRegistry.timer("rag.ask.duration", "status", "failure").record(durationMs, TimeUnit.MILLISECONDS);
+            log.error("rag.ask.failed operation=ask tenant={} conversationId={} durationMs={} exception={}", ragRequest.tenantId(), ragRequest.conversationId(), durationMs, e.getClass().getSimpleName(), e);
+            throw e;
+        }
     }
 
+    public Map<String, Object> evaluate(String tenantId, String question, String expectedSources, int topK) {
+        long startedAt = System.nanoTime();
+        log.info("rag.evaluation.started operation=evaluation tenant={} topK={} expectedSources={}", tenantId, topK, expectedSources);
+        try {
+            String transformedQuery = queryTransformer.transform(question);
+            List<String> queries = multiQueryGenerator.generateMultiQuery(transformedQuery);
+            List<Document> candidates = multiQueryRetriever.searchDocuments(queries, tenantId);
+            List<Document> finalDocuments = documentReranker.rerank(queries, candidates, topK);
 
+            Set<String> expectedSet = new HashSet<>();
+            if (expectedSources != null && !expectedSources.isBlank()) {
+               Arrays.stream(expectedSources.split("[,;|]"))
+                       .map(String::trim)
+                       .filter(value -> !value.isEmpty())
+                       .forEach(expectedSet::add);
+            }
+
+            int relevant = 0;
+            for (int i = 0; i < finalDocuments.size() && i < topK; i++) {
+               Document doc = finalDocuments.get(i);
+               String filename = doc.getMetadata().getOrDefault("filename", "").toString();
+               if (expectedSet.contains(filename)) {
+                   relevant++;
+               }
+            }
+
+            double precisionAtK = expectedSet.isEmpty() ? 0.0 : relevant / (double) Math.max(1, Math.min(topK, finalDocuments.size()));
+            double recallAtK = expectedSet.isEmpty() ? 0.0 : relevant / (double) expectedSet.size();
+            double mrr = 0.0;
+            int rank = 1;
+            for (Document doc : finalDocuments) {
+               String filename = doc.getMetadata().getOrDefault("filename", "").toString();
+               if (expectedSet.contains(filename)) {
+                   mrr = 1.0 / rank;
+                   break;
+               }
+               rank++;
+            }
+
+            long durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            meterRegistry.counter("rag.evaluation.count", "status", "success").increment();
+            meterRegistry.timer("rag.evaluation.duration", "status", "success").record(durationMs, TimeUnit.MILLISECONDS);
+            meterRegistry.summary("rag.evaluation.precision", "status", "success").record(precisionAtK);
+            meterRegistry.summary("rag.evaluation.recall", "status", "success").record(recallAtK);
+            meterRegistry.summary("rag.evaluation.mrr", "status", "success").record(mrr);
+            log.info("rag.evaluation.completed operation=evaluation tenant={} precision={} recall={} mrr={} durationMs={} status=success", tenantId, precisionAtK, recallAtK, mrr, durationMs);
+            return Map.of(
+                   "tenantId", tenantId,
+                   "precisionAtK", precisionAtK,
+                   "recallAtK", recallAtK,
+                   "mrr", mrr,
+                   "retrievedDocuments", finalDocuments.size(),
+                   "expectedSources", expectedSet
+            );
+        } catch (Exception e) {
+            long durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            meterRegistry.counter("rag.evaluation.count", "status", "failure").increment();
+            meterRegistry.timer("rag.evaluation.duration", "status", "failure").record(durationMs, TimeUnit.MILLISECONDS);
+            log.error("rag.evaluation.failed operation=evaluation tenant={} durationMs={} exception={}", tenantId, durationMs, e.getClass().getSimpleName(), e);
+            throw e;
+        }
+    }
 }
