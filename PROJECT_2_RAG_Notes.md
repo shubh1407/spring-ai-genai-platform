@@ -5115,3 +5115,1548 @@ Implemented and tested:
 - Unchanged-file skipping
 
 **P2 Day 11 — COMPLETE 🔒**
+
+# Project 2 — RAG
+# Day 13 — Production RAG Revision Notes
+
+## Day Goal
+
+Day 13 moved the RAG system from a learning-oriented in-memory vector store to a persistent production-oriented architecture.
+
+Main focus:
+
+- PostgreSQL + PGVector
+- Persistent vector storage
+- PGVector configuration
+- JPA persistence vs PGVector persistence
+- Document lifecycle persistence
+- DocumentRegistry
+- Tenant isolation/security boundary
+- Performance
+- Cost
+- Observability
+- Production architecture
+
+---
+
+# 1. From SimpleVectorStore to PGVector
+
+## Previous Architecture
+
+Initially the application used Spring AI's:
+
+```text
+SimpleVectorStore
+```
+
+It is an in-memory vector store.
+
+Problem:
+
+```text
+Application
+    ↓
+SimpleVectorStore
+    ↓
+RAM
+```
+
+After application restart:
+
+```text
+Application restart
+        ↓
+Memory cleared
+        ↓
+Vectors lost
+```
+
+This is suitable for learning/testing but not persistent production RAG.
+
+## Current Architecture
+
+The application now uses:
+
+```text
+Application
+    ↓
+Spring AI VectorStore abstraction
+    ↓
+PgVectorStore
+    ↓
+PostgreSQL + pgvector
+```
+
+The important design decision is that application code depends on:
+
+```java
+VectorStore
+```
+
+rather than directly depending on the concrete vector-store implementation.
+
+Therefore:
+
+```text
+RagService
+    ↓
+DocumentVectorStoreService
+    ↓
+VectorStore
+    ↓
+PgVectorStore
+    ↓
+PostgreSQL
+```
+
+The `DocumentVectorStoreService` does not need to know whether the implementation is `SimpleVectorStore` or `PgVectorStore`.
+
+---
+
+# 2. PostgreSQL + pgvector
+
+Current environment:
+
+```text
+Java              : 21
+Spring Boot       : 4.1.1
+Spring AI         : 2.0.0
+PostgreSQL        : 18.4
+pgvector          : 0.8.6
+Database           : openAi
+Embedding model   : gemini-embedding-2
+Embedding dimension: 3072
+```
+
+The PostgreSQL pgvector extension was installed and verified.
+
+Verification:
+
+```sql
+SELECT extname, extversion
+FROM pg_extension
+WHERE extname = 'vector';
+```
+
+Verified:
+
+```text
+vector | 0.8.6
+```
+
+---
+
+# 3. PGVector Configuration
+
+Current configuration:
+
+```yaml
+spring:
+  ai:
+    vectorstore:
+      pgvector:
+        initialize-schema: true
+        dimensions: 3072
+        distance-type: COSINE_DISTANCE
+        index-type: NONE
+```
+
+## `initialize-schema: true`
+
+This allows Spring AI PGVector to initialize the required vector-store schema/table when required.
+
+Important distinction:
+
+```text
+initialize-schema: true
+```
+
+does NOT mean:
+
+```text
+drop table
+recreate table
+recreate embeddings
+```
+
+on every application startup.
+
+Actual behavior:
+
+```text
+First startup
+    ↓
+Required PGVector schema/table initialized if missing
+    ↓
+Documents + embeddings stored
+
+
+Application restart
+    ↓
+Existing PostgreSQL data remains
+    ↓
+Existing vectors remain
+```
+
+This persistence behavior was manually verified.
+
+---
+
+# 4. Why Embeddings Survive Restart
+
+PostgreSQL is persistent storage.
+
+Therefore:
+
+```text
+Application
+     ↓
+PgVectorStore
+     ↓
+PostgreSQL
+     ↓
+Disk
+```
+
+Restarting the Java application does not delete PostgreSQL data.
+
+So after restart:
+
+```text
+vector_store
+    ↓
+existing chunks
+    ↓
+existing embeddings
+    ↓
+still available
+```
+
+No unnecessary re-embedding happens merely because the application restarted.
+
+This is exactly the behavior required from persistent RAG storage.
+
+---
+
+# 5. Embedding Dimension
+
+Current embedding model:
+
+```text
+gemini-embedding-2
+```
+
+Current dimension:
+
+```text
+3072
+```
+
+PGVector configuration:
+
+```yaml
+dimensions: 3072
+```
+
+The vector column dimension must match the embedding dimension.
+
+Conceptually:
+
+```text
+EmbeddingModel
+      ↓
+3072-dimensional vector
+      ↓
+PGVector vector column
+      ↓
+3072 dimensions
+```
+
+Changing the embedding model or dimensions requires considering compatibility with already stored vectors.
+
+---
+
+# 6. Why HNSW Was Disabled
+
+An HNSW index was initially considered for faster approximate nearest-neighbor retrieval.
+
+The database returned:
+
+```text
+column cannot have more than 2000 dimensions for hnsw index
+```
+
+Current embeddings are:
+
+```text
+3072 dimensions
+```
+
+Therefore the current configuration is:
+
+```yaml
+index-type: NONE
+```
+
+This allows 3072-dimensional vectors to be stored and retrieved without the HNSW dimensional limitation.
+
+This is a deliberate decision.
+
+It is NOT an indication that PGVector is broken.
+
+Future production optimization can evaluate:
+
+- lower-dimensional embeddings
+- another supported indexing strategy
+- another embedding model
+- dataset size and query volume
+- actual retrieval latency
+
+Do not blindly reduce embedding dimensions only to enable an index. Embedding quality and compatibility also matter.
+
+---
+
+# 7. Distance Metric
+
+Current configuration:
+
+```yaml
+distance-type: COSINE_DISTANCE
+```
+
+Cosine distance is commonly useful for semantic embedding similarity.
+
+The conceptual retrieval process:
+
+```text
+User Query
+    ↓
+Query Embedding
+    ↓
+Vector Similarity Search
+    ↓
+Relevant Chunks
+```
+
+The query and stored documents are represented as vectors and compared using the configured distance metric.
+
+---
+
+# 8. JPA vs PGVector
+
+This distinction is important.
+
+## JPA / Hibernate
+
+Current configuration:
+
+```yaml
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        default_schema: public
+```
+
+JPA manages tables associated with JPA entities.
+
+Common `ddl-auto` modes:
+
+```text
+none
+validate
+update
+create
+create-drop
+```
+
+### `validate`
+
+```text
+Existing schema
+      ↓
+Hibernate validates it
+```
+
+It does not create tables.
+
+### `update`
+
+For development, Hibernate can automatically create/update JPA-managed tables:
+
+```yaml
+ddl-auto: update
+```
+
+### Production
+
+The project currently uses:
+
+```yaml
+ddl-auto: validate
+```
+
+because production schema changes should be explicitly controlled rather than allowing Hibernate to automatically alter the database.
+
+---
+
+# 9. PGVector Is Not a JPA Table
+
+The PGVector vector-store table is not managed by JPA.
+
+Its initialization is handled by Spring AI PGVector:
+
+```yaml
+spring:
+  ai:
+    vectorstore:
+      pgvector:
+        initialize-schema: true
+```
+
+Therefore:
+
+```text
+JPA
+ ↓
+Hibernate
+ ↓
+JPA Entity tables
+
+
+RAG
+ ↓
+Spring AI VectorStore
+ ↓
+PgVectorStore
+ ↓
+PGVector vector-store table
+```
+
+These are separate mechanisms.
+
+This also explains why changing:
+
+```yaml
+ddl-auto: update
+```
+
+does not control the PGVector vector-store table.
+
+---
+
+# 10. DocumentRegistry
+
+Before Day 13, the registry was an in-memory map.
+
+Its responsibility was:
+
+```text
+Have we already ingested this document?
+Has its content changed?
+Should ingestion be skipped or performed again?
+```
+
+For production, this registry should survive application restarts.
+
+The registry was therefore moved to PostgreSQL.
+
+Current architecture:
+
+```text
+DocumentRegistry
+       ↓
+DocumentRepository
+       ↓
+DocumentEntity
+       ↓
+PostgreSQL documents table
+```
+
+---
+
+# 11. DocumentRegistry Responsibilities
+
+DocumentRegistry is responsible for document lifecycle state.
+
+It is NOT the vector store.
+
+### Registry
+
+```text
+Document identity
+Content hash
+Duplicate detection
+Update detection
+```
+
+### VectorStore
+
+```text
+Chunks
+Embeddings
+Similarity search
+Metadata
+Vector retrieval
+```
+
+Therefore:
+
+```text
+DocumentRegistry
+       ↓
+Should I ingest this document?
+       ↓
+SKIP / UPDATE / NEW
+
+
+VectorStore
+       ↓
+Store and retrieve indexed chunks
+```
+
+---
+
+# 12. Current DocumentRegistry Implementation
+
+Current implementation:
+
+```java
+@Component
+public class DocumentRegistry {
+
+    private final DocumentRepository documentRepository;
+
+    public DocumentRegistry(DocumentRepository documentRepository) {
+        this.documentRepository = documentRepository;
+    }
+
+    public boolean exists(
+            String tenantId,
+            String fileName,
+            String contentHash) {
+
+        return documentRepository
+                .existsByTenantIdAndFilenameAndContentHash(
+                        tenantId,
+                        fileName,
+                        contentHash
+                );
+    }
+
+    @Transactional
+    public void register(
+            String tenantId,
+            String fileName,
+            String contentHash) {
+
+        Optional<DocumentEntity> existing =
+                documentRepository
+                        .findByTenantIdAndFilename(
+                                tenantId,
+                                fileName
+                        );
+
+        if (existing.isPresent()) {
+            DocumentEntity entity = existing.get();
+
+            entity.setContentHash(contentHash);
+            entity.setUpdatedAt(Instant.now());
+
+            documentRepository.save(entity);
+            return;
+        }
+
+        DocumentEntity entity =
+                new DocumentEntity(
+                        UUID.randomUUID(),
+                        tenantId,
+                        fileName,
+                        contentHash
+                );
+
+        try {
+            documentRepository.save(entity);
+        }
+        catch (DataAccessException ex) {
+            Optional<DocumentEntity> maybe =
+                    documentRepository
+                            .findByTenantIdAndFilename(
+                                    tenantId,
+                                    fileName
+                            );
+
+            maybe.ifPresent(e -> {
+                e.setContentHash(contentHash);
+                e.setUpdatedAt(Instant.now());
+                documentRepository.save(e);
+            });
+        }
+    }
+}
+```
+
+---
+
+# 13. `exists()` Logic
+
+The registry checks:
+
+```text
+tenantId
++
+filename
++
+contentHash
+```
+
+This preserves the previous ingestion behavior.
+
+Example:
+
+```text
+tenant1 + company.pdf + hashA
+```
+
+already exists:
+
+```text
+exists() → true
+```
+
+Therefore:
+
+```text
+Skip ingestion
+```
+
+If the content hash changes:
+
+```text
+tenant1 + company.pdf + hashB
+```
+
+then:
+
+```text
+exists() → false
+```
+
+The lifecycle can perform update/re-index.
+
+---
+
+# 14. `register()` Logic
+
+The document identity is:
+
+```text
+tenantId + filename
+```
+
+The registry first checks:
+
+```java
+findByTenantIdAndFilename(...)
+```
+
+### Existing document
+
+If found:
+
+```text
+Update contentHash
+Update updatedAt
+Save
+```
+
+### New document
+
+If not found:
+
+```text
+Create UUID
+Create DocumentEntity
+Insert row
+```
+
+This gives the registry persistent document lifecycle state.
+
+---
+
+# 15. `@Transactional`
+
+The registration operation uses:
+
+```java
+@Transactional
+```
+
+This means the database operation is executed within a transaction.
+
+The important idea is:
+
+```text
+register()
+   ↓
+database operations
+   ↓
+transaction
+   ↓
+commit
+```
+
+This is appropriate for a persistent registry.
+
+---
+
+# 16. Unique Document Identity
+
+The intended database constraint is:
+
+```text
+UNIQUE(tenant_id, filename)
+```
+
+This means two rows cannot represent the same:
+
+```text
+tenant + filename
+```
+
+Example:
+
+```text
+tenant1 + company.pdf   → allowed
+tenant2 + company.pdf   → allowed
+
+tenant1 + company.pdf   → duplicate, not allowed
+```
+
+This is important for multi-tenant document lifecycle management.
+
+---
+
+# 17. Concurrent Insert Consideration
+
+The implementation also attempts to handle a rare race:
+
+```text
+Request A                  Request B
+    │                          │
+    ├── check                  ├── check
+    │                          │
+    ├── insert                 ├── insert
+    │                          │
+    └──────────── UNIQUE constraint ────────────
+```
+
+The database remains the final authority because of the unique constraint.
+
+The code catches:
+
+```java
+DataAccessException
+```
+
+and attempts to find/update the existing document.
+
+For P2 this is sufficient as a practical implementation.
+
+A more advanced production design could handle database constraint violations in a separate transaction/retry boundary, but that complexity is intentionally outside the current P2 scope.
+
+---
+
+# 18. Production Document Registry Table
+
+The intentionally simple design is:
+
+```text
+documents
+---------
+id
+tenant_id
+filename
+content_hash
+created_at
+updated_at
+```
+
+Required identity constraint:
+
+```text
+UNIQUE(tenant_id, filename)
+```
+
+No separate:
+
+```text
+document_chunks
+```
+
+table is required.
+
+Why?
+
+Because:
+
+```text
+DocumentRegistry
+    → lifecycle metadata
+
+
+PGVector
+    → chunks + embeddings
+```
+
+Keeping these responsibilities separate avoids unnecessary duplication.
+
+---
+
+# 19. Ingestion Lifecycle
+
+Current conceptual lifecycle:
+
+```text
+Document
+   ↓
+Calculate content hash
+   ↓
+DocumentRegistry
+   ↓
+Already exists with same hash?
+   │
+   ├── YES → SKIP
+   │
+   └── NO
+        ↓
+      Load
+        ↓
+      Chunk
+        ↓
+      Embed
+        ↓
+      Store in PGVector
+        ↓
+      Register/update document
+```
+
+For an updated document:
+
+```text
+Same tenant + filename
+        ↓
+Hash changed
+        ↓
+Remove old indexed chunks
+        ↓
+Chunk new document
+        ↓
+Generate embeddings
+        ↓
+Store new vectors
+        ↓
+Update registry hash
+```
+
+---
+
+# 20. Update / Re-index Verification
+
+A real document update was tested.
+
+Previous hash:
+
+```text
+b941faec5eb2b3b1a91b6daad89fbaf5
+```
+
+New hash:
+
+```text
+5d526125bc004e947f6a81b867eda11a
+```
+
+The updated document produced:
+
+- new content hash
+- new parent document identity
+- new chunks
+- old chunks removed
+- new chunks stored in PGVector
+
+This verified the lifecycle against persistent vector storage.
+
+---
+
+# 21. Tenant Isolation
+
+Tenant isolation was implemented and tested in Day 11.
+
+Documents contain tenant metadata:
+
+```text
+tenantId
+```
+
+Retrieval applies tenant filtering.
+
+Tests verified:
+
+```text
+Tenant 1
+    ↓
+Tenant 1 documents
+
+
+Tenant 2
+    ↓
+Tenant 2 documents
+
+
+Tenant 3 with no documents
+    ↓
+0 retrieved documents
+```
+
+No cross-tenant retrieval was observed through the normal tenant-filtered RAG flow.
+
+---
+
+# 22. Important Security Boundary
+
+The current prototype accepts `tenantId` through the request.
+
+That means the client technically controls the value.
+
+In production, this is not sufficient.
+
+Production architecture:
+
+```text
+Authenticated User
+       ↓
+Authentication
+       ↓
+Authorization
+       ↓
+Server determines tenantId
+       ↓
+Vector retrieval filter
+       ↓
+Only authorized tenant documents
+```
+
+The server must not blindly trust:
+
+```text
+client-provided tenantId
+```
+
+The Day 13 production security lesson is therefore:
+
+> Tenant filtering protects retrieval only when the tenant identity itself is trusted.
+
+Full authentication and authorization belong to the broader production security scope and are not rebuilt as part of P2.
+
+---
+
+# 23. Performance
+
+RAG latency comes from multiple stages.
+
+Current pipeline:
+
+```text
+Query
+ ↓
+Query Transformation
+ ↓
+Multi-Query Generation
+ ↓
+Vector Retrieval
+ ↓
+Reranking
+ ↓
+Context Construction
+ ↓
+LLM
+ ↓
+Answer
+```
+
+Potential performance bottlenecks:
+
+- query transformation latency
+- multi-query LLM latency
+- number of retrieval queries
+- database/vector retrieval latency
+- candidate count
+- reranking latency
+- context construction
+- LLM generation latency
+- network latency
+
+The production principle is:
+
+> Measure first, optimize second.
+
+Do not optimize a stage without knowing that it is actually a bottleneck.
+
+---
+
+# 24. RAG Cost
+
+RAG cost comes from more than the final answer generation.
+
+## Embedding cost
+
+```text
+Documents
+   ↓
+Chunks
+   ↓
+Embeddings
+```
+
+More chunks mean more embedding work.
+
+## Multi-query cost
+
+Multi-query retrieval can improve recall but creates additional work:
+
+```text
+Original query
+    +
+Alternative query 1
+    +
+Alternative query 2
+    +
+Alternative query 3
+```
+
+This can increase:
+
+- LLM usage
+- retrieval operations
+- latency
+
+## Context/token cost
+
+More retrieved context means more tokens sent to the LLM.
+
+Therefore:
+
+```text
+More context ≠ better RAG
+```
+
+The target is:
+
+```text
+minimum sufficient relevant context
+```
+
+## Reranking cost
+
+Reranking improves ordering but introduces additional computation.
+
+Production RAG must balance:
+
+```text
+Quality
+  ↕
+Latency
+  ↕
+Cost
+```
+
+---
+
+# 25. Observability
+
+Observability was already implemented across the RAG pipeline.
+
+Important metrics include:
+
+```text
+rag.query.transform.count
+rag.query.transform.duration
+
+rag.multi.query.count
+rag.multi.query.duration
+
+rag.retrieval.count
+rag.retrieval.duration
+rag.retrieval.empty
+
+rag.reranking.count
+rag.reranking.duration
+
+rag.context.count
+rag.context.duration
+
+rag.citations.count
+rag.citations.duration
+
+rag.ask.count
+rag.ask.duration
+rag.ask.failure
+
+rag.ingestion.count
+rag.ingestion.duration
+rag.ingestion.skipped
+rag.ingestion.updated
+rag.ingestion.chunks
+
+rag.evaluation.count
+rag.evaluation.duration
+rag.evaluation.precision
+rag.evaluation.recall
+rag.evaluation.mrr
+```
+
+Structured logging was added for:
+
+```text
+rag.ingestion.started
+rag.ingestion.discovered
+rag.ingestion.file.started
+rag.ingestion.file.completed
+rag.ingestion.completed
+
+rag.query.transform.started
+rag.query.transform.completed
+rag.query.transform.failed
+
+rag.multi.query.started
+rag.multi.query.completed
+rag.multi.query.failed
+
+rag.retrieval.started
+rag.retrieval.completed
+rag.retrieval.failed
+
+rag.reranking.started
+rag.reranking.completed
+rag.reranking.failed
+
+rag.context.started
+rag.context.completed
+rag.context.failed
+
+rag.citations.started
+rag.citations.completed
+rag.citations.failed
+
+rag.ask.started
+rag.ask.llm.completed
+rag.ask.citations.completed
+rag.ask.completed
+rag.ask.failed
+
+rag.evaluation.started
+rag.evaluation.completed
+rag.evaluation.failed
+```
+
+This gives visibility into where RAG requests spend time and where failures occur.
+
+---
+
+# 26. Production RAG Architecture
+
+```text
+                         USER
+                           │
+                           ▼
+                    RagController
+                           │
+                           ▼
+                       RagService
+                           │
+             ┌─────────────┴─────────────┐
+             │                           │
+             ▼                           ▼
+      Query Transformation        Document Ingestion
+             │                           │
+             ▼                           ▼
+        Multi-Query                    Chunking
+             │                           │
+             ▼                           ▼
+      Vector Retrieval              Embeddings
+             │                           │
+             ▼                           ▼
+         Candidates                 PgVectorStore
+             │                           │
+             ▼                           ▼
+          Reranking                PostgreSQL
+             │
+             ▼
+      Context Construction
+             │
+             ▼
+       Prompt + Context
+             │
+             ▼
+        AI Provider
+             │
+             ▼
+            LLM
+             │
+             ▼
+      Grounded Answer
+             │
+       ┌─────┴─────┐
+       ▼           ▼
+  Citations    Response
+```
+
+Supporting persistence:
+
+```text
+DocumentRegistry
+       ↓
+DocumentRepository
+       ↓
+PostgreSQL documents table
+
+
+PgVectorStore
+       ↓
+PostgreSQL PGVector storage
+```
+
+---
+
+# 27. Complete Production Mental Model
+
+```text
+                 DOCUMENT
+                    │
+                    ▼
+             DocumentRegistry
+                    │
+            duplicate/update?
+                    │
+          ┌─────────┴─────────┐
+          │                   │
+         SKIP                INDEX
+                              │
+                              ▼
+                            Chunk
+                              │
+                              ▼
+                           Embed
+                              │
+                              ▼
+                           PGVector
+                              │
+                              │
+USER ─────────────────────────┤
+ │                            │
+ ▼                            ▼
+Query Transform          Stored Knowledge
+ │
+ ▼
+Multi Query
+ │
+ ▼
+Retrieval
+ │
+ ▼
+Reranking
+ │
+ ▼
+Context Engineering
+ │
+ ▼
+Grounded Prompt
+ │
+ ▼
+LLM
+ │
+ ▼
+Answer + Citations
+```
+
+Security overlays the retrieval boundary:
+
+```text
+Authenticated Identity
+        ↓
+Authorized Tenant
+        ↓
+Tenant-filtered Retrieval
+        ↓
+Authorized Knowledge
+```
+
+Observability overlays every important stage:
+
+```text
+Count
+Duration
+Failures
+Empty retrieval
+Quality metrics
+```
+
+---
+
+# 28. Important Design Decisions
+
+## Decision 1
+
+Use:
+
+```text
+PostgreSQL + PGVector
+```
+
+instead of:
+
+```text
+SimpleVectorStore
+```
+
+because persistent RAG storage is required.
+
+## Decision 2
+
+Keep:
+
+```java
+VectorStore
+```
+
+as the application abstraction.
+
+Do not couple business logic unnecessarily to `PgVectorStore`.
+
+## Decision 3
+
+Keep:
+
+```text
+DocumentRegistry
+```
+
+and:
+
+```text
+VectorStore
+```
+
+separate.
+
+## Decision 4
+
+Keep:
+
+```text
+3072 dimensions
+```
+
+because that matches the current embedding model.
+
+Use:
+
+```text
+index-type: NONE
+```
+
+until an appropriate indexing strategy is selected.
+
+## Decision 5
+
+Keep:
+
+```text
+initialize-schema: true
+```
+
+for automatic PGVector schema/table initialization when required.
+
+It does not recreate data on every restart.
+
+## Decision 6
+
+Use JPA:
+
+```text
+ddl-auto: validate
+```
+
+for the current production-oriented configuration.
+
+Do not confuse JPA schema management with PGVector schema management.
+
+## Decision 7
+
+Persist DocumentRegistry separately in PostgreSQL.
+
+Registry responsibility:
+
+```text
+document identity + content hash + lifecycle
+```
+
+PGVector responsibility:
+
+```text
+chunks + embeddings + retrieval
+```
+
+## Decision 8
+
+Tenant isolation must eventually be based on authenticated/authorized identity, not blindly trusted request parameters.
+
+---
+
+# 29. Day 13 Verification Checklist
+
+### PGVector
+
+- [x] PostgreSQL connected
+- [x] pgvector extension installed
+- [x] pgvector version verified
+- [x] SimpleVectorStore replaced by PGVector
+- [x] 3072-dimensional vectors stored
+- [x] Cosine distance configured
+- [x] HNSW limitation understood
+- [x] HNSW disabled with `index-type: NONE`
+- [x] Vector retrieval works
+- [x] Metadata preserved
+- [x] Application restart tested
+- [x] Existing embeddings survive restart
+
+### Document Lifecycle
+
+- [x] Hash-based duplicate detection
+- [x] Persistent DocumentRegistry
+- [x] PostgreSQL repository
+- [x] Existing document update
+- [x] New document insert
+- [x] `@Transactional`
+- [x] Tenant + filename identity
+- [x] Unique constraint design
+- [x] Update/re-index tested
+- [x] Old chunks removed during update
+
+### Security
+
+- [x] Tenant metadata filtering
+- [x] Tenant isolation tested
+- [x] Production authorization boundary identified
+
+### Production
+
+- [x] Performance considerations
+- [x] Cost considerations
+- [x] Observability
+- [x] Production architecture
+- [x] Persistence behavior understood
+
+---
+
+# 30. Day 13 Status
+
+## COMPLETE
+
+Day 13 production RAG work is complete.
+
+The remaining DocumentRegistry task was completed by replacing the in-memory registry with PostgreSQL persistence through:
+
+```text
+DocumentRegistry
+    ↓
+DocumentRepository
+    ↓
+DocumentEntity
+    ↓
+PostgreSQL
+```
+
+The final architecture now has two persistent responsibilities:
+
+```text
+PostgreSQL
+│
+├── Document Registry
+│     └── lifecycle / dedup / content hash
+│
+└── PGVector
+      └── chunks / embeddings / similarity retrieval
+```
+
+No `document_chunks` table was added because it is unnecessary for the current design.
+
+No changes were made to the PGVector responsibility.
+
+---
+
+# Final Day 13 Revision
+
+Remember these five points:
+
+### 1. SimpleVectorStore vs PGVector
+
+```text
+SimpleVectorStore → in-memory
+PGVector          → persistent
+```
+
+### 2. JPA vs PGVector
+
+```text
+JPA/Hibernate
+    → JPA entity tables
+
+Spring AI PGVector
+    → vector-store table
+```
+
+They are separate.
+
+### 3. DocumentRegistry vs VectorStore
+
+```text
+Registry
+    → Should this document be indexed?
+
+VectorStore
+    → Store/retrieve indexed vectors.
+```
+
+### 4. Restart behavior
+
+```text
+Restart application
+        ↓
+PostgreSQL remains
+        ↓
+Vectors remain
+        ↓
+No automatic re-embedding
+```
+
+### 5. Production tenant security
+
+```text
+Client tenantId
+       ↓
+NOT trusted blindly
+
+Authenticated identity
+       ↓
+Authorized tenant
+       ↓
+Tenant-filtered retrieval
+```
+
+The core production RAG foundation is now persistent, observable, lifecycle-aware, and ready for the final P2 integration work.
