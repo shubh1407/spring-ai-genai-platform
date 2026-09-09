@@ -5,6 +5,14 @@ spring:
     url: jdbc:postgresql://localhost:5432/openAi
     username: postgres
     password: admin
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        default_schema: rag
   ai:
     retry:
       max-attempts: 3
@@ -41,6 +49,7 @@ spring:
         distance-type: COSINE_DISTANCE
         # Index type (HNSW, IVFFLAT, or NONE)
         index-type: NONE
+        schema-name: rag
 
 
 logging:
