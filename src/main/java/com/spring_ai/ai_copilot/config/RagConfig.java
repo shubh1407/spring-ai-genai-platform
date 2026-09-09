@@ -10,9 +10,9 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class RagConfig {
 
-    @Bean
+    /*@Bean
     public VectorStore vectorStore(@Qualifier("googleGenAiTextEmbedding") EmbeddingModel embeddingModel){
         return SimpleVectorStore.builder(embeddingModel).build();
-    }
+    }*/
 
 }

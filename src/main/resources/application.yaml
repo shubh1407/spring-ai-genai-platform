@@ -1,6 +1,10 @@
 spring:
   application:
     name: ai-copilot
+  datasource:
+    url: jdbc:postgresql://localhost:5432/openAi
+    username: postgres
+    password: admin
   ai:
     retry:
       max-attempts: 3
@@ -27,6 +31,16 @@ spring:
           project-id: gen-lang-client-0321316403
           text:
             model: gemini-embedding-2
+    vectorstore:
+      pgvector:
+        # Automatically creates the 'vector_store' table and extensions on startup
+        initialize-schema: true
+        # Matches OpenAI text-embedding-ada-002 dimensions (change if using another model)
+        dimensions: 3072
+        # Distance metric (COSINE_DISTANCE, EUCLIDEAN_DISTANCE, or NEGATIVE_INNER_PRODUCT)
+        distance-type: COSINE_DISTANCE
+        # Index type (HNSW, IVFFLAT, or NONE)
+        index-type: NONE
 
 
 logging:
