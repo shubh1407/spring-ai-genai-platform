@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
+import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 
 import java.util.Arrays;
 import java.util.Comparator;
@@ -17,9 +18,11 @@ public class DocumentReRankerImpl implements DocumentReranker {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentReRankerImpl.class);
     private final MeterRegistry meterRegistry;
+    private final AiExceptionTranslator aiExceptionTranslator;
 
-    public DocumentReRankerImpl(MeterRegistry meterRegistry) {
+    public DocumentReRankerImpl(MeterRegistry meterRegistry, AiExceptionTranslator aiExceptionTranslator) {
         this.meterRegistry = meterRegistry;
+        this.aiExceptionTranslator = aiExceptionTranslator;
     }
 
     @Override
@@ -46,7 +49,7 @@ public class DocumentReRankerImpl implements DocumentReranker {
             meterRegistry.counter("rag.reranking.count", "status", "failure").increment();
             meterRegistry.timer("rag.reranking.duration", "status", "failure").record(durationMs, TimeUnit.MILLISECONDS);
             log.warn("rag.reranking.failed operation=reranking durationMs={} exception={}", durationMs, e.getClass().getSimpleName(), e);
-            throw e;
+            throw aiExceptionTranslator.translate(e);
         }
     }
 

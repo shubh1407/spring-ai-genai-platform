@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -16,12 +17,14 @@ public class MultiQueryRetriever {
 
     private final DocumentVectorStoreService vectorStoreService;
     private final MeterRegistry meterRegistry;
+    private final AiExceptionTranslator aiExceptionTranslator;
 
     private final static Logger log = LoggerFactory.getLogger(MultiQueryRetriever.class);
 
-    public MultiQueryRetriever(DocumentVectorStoreService vectorStoreService, MeterRegistry meterRegistry) {
+    public MultiQueryRetriever(DocumentVectorStoreService vectorStoreService, MeterRegistry meterRegistry, AiExceptionTranslator aiExceptionTranslator) {
         this.vectorStoreService = vectorStoreService;
         this.meterRegistry = meterRegistry;
+        this.aiExceptionTranslator = aiExceptionTranslator;
     }
 
     public List<Document> searchDocuments(List<String> queries, String tenantId) {
@@ -57,7 +60,7 @@ public class MultiQueryRetriever {
             meterRegistry.counter("rag.retrieval.count", "status", "failure").increment();
             meterRegistry.timer("rag.retrieval.duration", "status", "failure").record(durationMs, TimeUnit.MILLISECONDS);
             log.warn("rag.multi.retrieval.failed operation=multi.retrieval tenant={} durationMs={} exception={}", tenantId, durationMs, e.getClass().getSimpleName(), e);
-            throw e;
+            throw aiExceptionTranslator.translate(e);
         }
     }
 }

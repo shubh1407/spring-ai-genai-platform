@@ -115,6 +115,49 @@ public class AiExceptionTranslator {
                     HttpStatus.BAD_GATEWAY,
                     "AI_PROVIDER_RETRYABLE_ERROR",
                     "AI provider request failed and may be retried"
+            ),
+
+            /* RAG lifecycle related errors */
+            new ProviderErrorMapping(
+                    "java.io.IOException",
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "RAG_IO_ERROR",
+                    "Document I/O operation failed"
+            ),
+
+            new ProviderErrorMapping(
+                    "java.sql.SQLException",
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "RAG_DB_ERROR",
+                    "Database operation failed"
+            ),
+
+            new ProviderErrorMapping(
+                    "org.springframework.dao.DataAccessException",
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "RAG_DB_ERROR",
+                    "Database access error"
+            ),
+
+            new ProviderErrorMapping(
+                    "java.lang.IllegalArgumentException",
+                    HttpStatus.BAD_REQUEST,
+                    "RAG_INVALID_INPUT",
+                    "Invalid input provided to RAG operation"
+            ),
+
+            new ProviderErrorMapping(
+                    "java.lang.IllegalStateException",
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "RAG_STATE_ERROR",
+                    "RAG operation in illegal state"
+            ),
+
+            new ProviderErrorMapping(
+                    "java.lang.NullPointerException",
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "RAG_NULL_POINTER",
+                    "Unexpected null value encountered"
             )
     );
 

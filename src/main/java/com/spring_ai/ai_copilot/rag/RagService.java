@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
+import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -47,10 +48,11 @@ public class RagService {
     private final MultiQueryGenerator multiQueryGenerator;
     private final MultiQueryRetriever multiQueryRetriever;
     private final MeterRegistry meterRegistry;
+    private final AiExceptionTranslator aiExceptionTranslator;
 
     private static final Logger log = LoggerFactory.getLogger(RagService.class);
 
-    public RagService(DocumentIngestionService documentIngestionService, DocumentChunkingService documentChunkingService, DocumentEmbeddingService documentEmbeddingService, DocumentVectorStoreService documentVectorStoreService, AiProviderClient aiProviderClient, ContextBuilder ctxBuilder, CitationBuilder citationBuilder, QueryTransformer queryTransformer, DocumentReranker documentReranker, MultiQueryGenerator multiQueryGenerator, MultiQueryRetriever multiQueryRetriever, MeterRegistry meterRegistry) {
+    public RagService(DocumentIngestionService documentIngestionService, DocumentChunkingService documentChunkingService, DocumentEmbeddingService documentEmbeddingService, DocumentVectorStoreService documentVectorStoreService, AiProviderClient aiProviderClient, ContextBuilder ctxBuilder, CitationBuilder citationBuilder, QueryTransformer queryTransformer, DocumentReranker documentReranker, MultiQueryGenerator multiQueryGenerator, MultiQueryRetriever multiQueryRetriever, MeterRegistry meterRegistry, AiExceptionTranslator aiExceptionTranslator) {
         this.documentIngestionService = documentIngestionService;
         this.documentChunkingService = documentChunkingService;
         this.documentEmbeddingService = documentEmbeddingService;
@@ -63,6 +65,7 @@ public class RagService {
         this.multiQueryGenerator = multiQueryGenerator;
         this.multiQueryRetriever = multiQueryRetriever;
         this.meterRegistry = meterRegistry;
+        this.aiExceptionTranslator = aiExceptionTranslator;
     }
 
     public List<Document> ragDocuments(String path, String tenantId) throws IOException {
@@ -145,7 +148,7 @@ public class RagService {
             meterRegistry.counter("rag.ask.failure", "status", "failure").increment();
             meterRegistry.timer("rag.ask.duration", "status", "failure").record(durationMs, TimeUnit.MILLISECONDS);
             log.error("rag.ask.failed operation=ask tenant={} conversationId={} durationMs={} exception={}", ragRequest.tenantId(), ragRequest.conversationId(), durationMs, e.getClass().getSimpleName(), e);
-            throw e;
+            throw aiExceptionTranslator.translate(e);
         }
     }
 
@@ -208,7 +211,7 @@ public class RagService {
             meterRegistry.counter("rag.evaluation.count", "status", "failure").increment();
             meterRegistry.timer("rag.evaluation.duration", "status", "failure").record(durationMs, TimeUnit.MILLISECONDS);
             log.error("rag.evaluation.failed operation=evaluation tenant={} durationMs={} exception={}", tenantId, durationMs, e.getClass().getSimpleName(), e);
-            throw e;
+            throw aiExceptionTranslator.translate(e);
         }
     }
 }

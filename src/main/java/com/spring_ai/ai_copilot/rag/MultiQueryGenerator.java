@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
+import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 
 import java.util.Arrays;
 import java.util.List;
@@ -17,12 +18,14 @@ public class MultiQueryGenerator {
 
     private final AiProviderClient aiProviderClient;
     private final MeterRegistry meterRegistry;
+    private final AiExceptionTranslator aiExceptionTranslator;
 
     private final static Logger log = LoggerFactory.getLogger(MultiQueryGenerator.class);
 
-    public MultiQueryGenerator(AiProviderClient aiProviderClient, MeterRegistry meterRegistry) {
+    public MultiQueryGenerator(AiProviderClient aiProviderClient, MeterRegistry meterRegistry, AiExceptionTranslator aiExceptionTranslator) {
         this.aiProviderClient = aiProviderClient;
         this.meterRegistry = meterRegistry;
+        this.aiExceptionTranslator = aiExceptionTranslator;
     }
 
     public List<String> generateMultiQuery(String query) {
@@ -64,7 +67,7 @@ public class MultiQueryGenerator {
             meterRegistry.counter("rag.multi.query.count", "status", "failure").increment();
             meterRegistry.timer("rag.multi.query.duration", "status", "failure").record(durationMs, TimeUnit.MILLISECONDS);
             log.warn("rag.multi.query.failed operation=multi.query durationMs={} exception={}", durationMs, e.getClass().getSimpleName(), e);
-            throw e;
+            throw aiExceptionTranslator.translate(e);
         }
     }
 }

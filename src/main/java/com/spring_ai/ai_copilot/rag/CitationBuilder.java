@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
+import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -15,9 +16,11 @@ public class CitationBuilder {
 
     private static final Logger log = LoggerFactory.getLogger(CitationBuilder.class);
     private final MeterRegistry meterRegistry;
+    private final AiExceptionTranslator aiExceptionTranslator;
 
-    public CitationBuilder(MeterRegistry meterRegistry) {
+    public CitationBuilder(MeterRegistry meterRegistry, AiExceptionTranslator aiExceptionTranslator) {
         this.meterRegistry = meterRegistry;
+        this.aiExceptionTranslator = aiExceptionTranslator;
     }
 
     public List<Citation> extractSources(List<Document> documents) {
@@ -35,7 +38,7 @@ public class CitationBuilder {
             meterRegistry.counter("rag.citations.count", "status", "failure").increment();
             meterRegistry.timer("rag.citations.duration", "status", "failure").record(durationMs, TimeUnit.MILLISECONDS);
             log.warn("rag.citations.failed operation=citations durationMs={} exception={}", durationMs, e.getClass().getSimpleName(), e);
-            throw e;
+            throw aiExceptionTranslator.translate(e);
         }
     }
 

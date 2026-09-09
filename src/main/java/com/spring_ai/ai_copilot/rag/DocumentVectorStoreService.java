@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
@@ -19,10 +20,12 @@ public class DocumentVectorStoreService {
 
     private final VectorStore vectorStore;
     private final MeterRegistry meterRegistry;
+    private final AiExceptionTranslator aiExceptionTranslator;
 
-    public DocumentVectorStoreService(VectorStore vectorStore, MeterRegistry meterRegistry) {
+    public DocumentVectorStoreService(VectorStore vectorStore, MeterRegistry meterRegistry, AiExceptionTranslator aiExceptionTranslator) {
        this.vectorStore = vectorStore;
        this.meterRegistry = meterRegistry;
+       this.aiExceptionTranslator = aiExceptionTranslator;
     }
 
     public void indexDocuments(List<Document> documents){
@@ -41,7 +44,7 @@ public class DocumentVectorStoreService {
            meterRegistry.counter("rag.vector.index.count", "status", "failure").increment();
            meterRegistry.timer("rag.vector.index.duration", "status", "failure").record(durationMs, TimeUnit.MILLISECONDS);
            log.warn("rag.vector.index.failed operation=index.documents durationMs={} exception={}", durationMs, e.getClass().getSimpleName(), e);
-           throw e;
+           throw aiExceptionTranslator.translate(e);
        }
     }
 
@@ -63,7 +66,7 @@ public class DocumentVectorStoreService {
            meterRegistry.counter("rag.retrieval.count", "status", "failure").increment();
            meterRegistry.timer("rag.retrieval.duration", "status", "failure").record(durationMs, TimeUnit.MILLISECONDS);
            log.warn("rag.retrieval.failed operation=vector.search durationMs={} exception={}", durationMs, e.getClass().getSimpleName(), e);
-           throw e;
+           throw aiExceptionTranslator.translate(e);
        }
     }
 
@@ -85,7 +88,7 @@ public class DocumentVectorStoreService {
            meterRegistry.counter("rag.retrieval.count", "status", "failure").increment();
            meterRegistry.timer("rag.retrieval.duration", "status", "failure").record(durationMs, TimeUnit.MILLISECONDS);
            log.warn("rag.retrieval.failed operation=vector.search.topk durationMs={} exception={}", durationMs, e.getClass().getSimpleName(), e);
-           throw e;
+           throw aiExceptionTranslator.translate(e);
        }
     }
 

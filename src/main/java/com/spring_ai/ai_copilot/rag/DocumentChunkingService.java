@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TextSplitter;
+import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -18,10 +19,12 @@ public class DocumentChunkingService {
 
     private final TextSplitter textSplitter;
     private final MeterRegistry meterRegistry;
+    private final AiExceptionTranslator aiExceptionTranslator;
 
-    public DocumentChunkingService(TextSplitter textSplitter, MeterRegistry meterRegistry) {
+    public DocumentChunkingService(TextSplitter textSplitter, MeterRegistry meterRegistry, AiExceptionTranslator aiExceptionTranslator) {
         this.textSplitter = textSplitter;
         this.meterRegistry = meterRegistry;
+        this.aiExceptionTranslator = aiExceptionTranslator;
     }
 
     public List<Document> chunkDocuments(List<Document> documents) {
@@ -39,7 +42,7 @@ public class DocumentChunkingService {
            meterRegistry.counter("rag.ingestion.chunks", "status", "failure").increment();
            meterRegistry.timer("rag.ingestion.duration", "status", "failure").record(durationMs, TimeUnit.MILLISECONDS);
            log.warn("rag.chunking.failed operation=chunking durationMs={} exception={}", durationMs, e.getClass().getSimpleName(), e);
-           throw e;
+           throw aiExceptionTranslator.translate(e);
         }
     }
 }

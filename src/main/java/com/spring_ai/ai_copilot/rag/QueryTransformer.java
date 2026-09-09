@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 
 import java.util.concurrent.TimeUnit;
 
@@ -12,9 +13,11 @@ public class QueryTransformer {
 
     private static final Logger log = LoggerFactory.getLogger(QueryTransformer.class);
     private final MeterRegistry meterRegistry;
+    private final AiExceptionTranslator aiExceptionTranslator;
 
-    public QueryTransformer(MeterRegistry meterRegistry) {
+    public QueryTransformer(MeterRegistry meterRegistry, AiExceptionTranslator aiExceptionTranslator) {
         this.meterRegistry = meterRegistry;
+        this.aiExceptionTranslator = aiExceptionTranslator;
     }
 
     public String transform(String query) {
@@ -32,7 +35,7 @@ public class QueryTransformer {
             meterRegistry.counter("rag.query.transform.count", "status", "failure").increment();
             meterRegistry.timer("rag.query.transform.duration", "status", "failure").record(durationMs, TimeUnit.MILLISECONDS);
             log.warn("rag.query.transform.failed operation=query.transform durationMs={} exception={}", durationMs, e.getClass().getSimpleName(), e);
-            throw e;
+            throw aiExceptionTranslator.translate(e);
         }
     }
 }

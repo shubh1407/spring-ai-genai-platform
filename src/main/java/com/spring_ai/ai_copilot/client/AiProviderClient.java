@@ -17,6 +17,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.StructuredOutputValidationAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
+import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -35,19 +36,22 @@ public class AiProviderClient {
     private final io.github.resilience4j.circuitbreaker.CircuitBreaker circuitBreaker;
     private final io.github.resilience4j.ratelimiter.RateLimiter rateLimiter;
     private final MeterRegistry meterRegistry;
+    private final AiExceptionTranslator aiExceptionTranslator;
 
     public AiProviderClient(ChatClient.Builder chatClientBuilder,
                           StructuredOutputValidationAdvisor validationAdvisor,
                           MessageChatMemoryAdvisor messageChatMemoryAdvisor,
                           CircuitBreakerRegistry registry,
                           RateLimiterRegistry rateLimiterRegistry,
-                          MeterRegistry meterRegistry) {
+                          MeterRegistry meterRegistry,
+                          AiExceptionTranslator aiExceptionTranslator) {
         this.client = chatClientBuilder.build();
         this.validationAdvisor = validationAdvisor;
         this.messageChatMemoryAdvisor = messageChatMemoryAdvisor;
         this.circuitBreaker = registry.circuitBreaker("aiProvider");
         this.rateLimiter = rateLimiterRegistry.rateLimiter("aiProvider");
         this.meterRegistry = meterRegistry;
+        this.aiExceptionTranslator = aiExceptionTranslator;
     }
 
     @Bulkhead(name = "aiProvider")
