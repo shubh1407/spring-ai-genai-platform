@@ -6658,5 +6658,575 @@ Authorized tenant
        ↓
 Tenant-filtered retrieval
 ```
+## Day 14 — Final Closure
 
-The core production RAG foundation is now persistent, observable, lifecycle-aware, and ready for the final P2 integration work.
+### Goal
+
+Close the genuinely remaining P2 items and perform the final verification before moving to Project 3.
+
+---
+
+## 1. Final E2E Regression Testing
+
+Individual flows were already tested during previous days. Day 14 only closes them as one final regression suite.
+
+### Required scenarios
+
+#### 1. Ingestion
+Verify:
+
+- document discovery
+- parsing
+- chunking
+- embedding
+- PGVector storage
+- document registry update
+
+#### 2. Duplicate ingestion
+
+Same:
+
+`tenantId + filename + contentHash`
+
+Expected:
+
+`SKIP` — no duplicate vectors.
+
+#### 3. Document update
+
+Same tenant + filename, but changed content.
+
+Expected:
+
+```text
+New content hash
+    ↓
+Old indexed version removed
+    ↓
+New chunks embedded
+    ↓
+New vectors stored
+    ↓
+Registry updated
+```
+
+#### 4. Restart persistence
+
+```text
+Ingest
+ ↓
+Restart application
+ ↓
+Ask question
+```
+
+Expected: existing knowledge is still retrievable.
+
+#### 5. Tenant isolation
+
+```text
+Tenant A → A documents only
+Tenant B → B documents only
+Tenant C → no documents
+```
+
+Production note: tenant identity must ultimately come from authenticated/authorized context, not be blindly trusted from a client parameter.
+
+#### 6. RAG answer + citations
+
+Verify:
+
+- relevant answer
+- answer grounded in retrieved context
+- sources returned
+- PDF page metadata preserved where available
+
+#### 7. Unsupported question
+
+Expected behavior:
+
+```text
+Information is not available in the provided context.
+```
+
+The system must not confidently invent information.
+
+#### 8. Metadata filtering
+
+Verify tenant/file/source filters return only the expected documents.
+
+#### 9. Failure/validation cases
+
+Verify invalid requests and ingestion failures produce controlled errors.
+
+### E2E assertion rule
+
+Do not assert:
+
+- exact LLM wording
+- UUIDs
+- timestamps
+- log message text
+
+Assert behavior and system state instead.
+
+---
+
+# 2. Embedding Model Selection — Final Decision
+
+The embedding model should be evaluated using:
+
+- retrieval quality
+- dimensions
+- cost
+- latency
+- language support
+- input limits
+- domain performance
+- infrastructure
+- vector-index compatibility
+
+### Current decision
+
+The project uses the configured Google GenAI embedding model with 3072-dimensional vectors.
+
+The important engineering decision is:
+
+> Do not select an embedding model only because it has more dimensions. Choose based on retrieval quality and the complete cost/latency/storage/index trade-off.
+
+### Model change rule
+
+Changing the embedding model can require re-embedding existing documents because the vector space can change.
+
+```text
+Old model
+   ↓
+Existing vectors
+
+New model
+   ↓
+Re-embed documents
+   ↓
+Re-index
+```
+
+Treat the embedding model/version as part of the index configuration.
+
+---
+
+# 3. PGVector Indexing & Performance
+
+Current project configuration:
+
+```yaml
+dimensions: 3072
+distance-type: COSINE_DISTANCE
+index-type: NONE
+```
+
+HNSW was not enabled because the current 3072-dimensional vectors exceeded the encountered HNSW dimension limitation.
+
+### Important distinction
+
+```text
+Vector storage ≠ Vector indexing
+```
+
+The current system can store and retrieve vectors correctly without an ANN index.
+
+At larger scale, indexing becomes important for retrieval performance.
+
+### Production decision
+
+Before changing the embedding model/dimension only to enable an index, benchmark:
+
+- retrieval quality
+- retrieval latency
+- storage
+- embedding cost
+- index performance
+
+Then choose the appropriate production strategy.
+
+---
+
+# 4. Final Performance Checklist
+
+Measure the major RAG stages independently:
+
+```text
+Query transformation
+        ↓
+Multi-query generation
+        ↓
+Retrieval
+        ↓
+Reranking
+        ↓
+Context construction
+        ↓
+LLM
+```
+
+Also measure ingestion:
+
+```text
+Parsing
+ ↓
+Chunking
+ ↓
+Embedding
+ ↓
+Vector write
+```
+
+Important metrics:
+
+- retrieval latency
+- reranking latency
+- LLM latency
+- total latency
+- token usage
+- context size
+- retrieved document count
+- empty retrieval rate
+- embedding latency
+- vector-write latency
+
+### Optimization principle
+
+Do not assume the LLM is always the bottleneck.
+
+Too many queries, too many candidates, expensive reranking, or oversized context can also increase latency and cost.
+
+---
+
+# 5. Final P2 Architecture Review
+
+```text
+                    USER
+                      ↓
+               RAG Controller
+                      ↓
+                  RagService
+                      ↓
+             Query Transformation
+                      ↓
+                Multi Query
+                      ↓
+                 Retrieval
+                      ↓
+                 Reranking
+                      ↓
+              Context Builder
+                 ↙       ↘
+               LLM     Citations
+                 ↘       ↙
+                RAG Response
+```
+
+Ingestion:
+
+```text
+Documents
+    ↓
+Parsing
+    ↓
+Chunking
+    ↓
+Embeddings
+    ↓
+PGVector
+```
+
+Lifecycle:
+
+```text
+DocumentRegistry
+       ↓
+DocumentRepository
+       ↓
+PostgreSQL
+```
+
+---
+
+# 6. Day 14 Completion Checklist
+
+- [ ] Final automated E2E regression suite
+- [x] Embedding model selection understanding
+- [x] PGVector indexing/performance decision
+- [x] Final architecture review
+- [x] Hybrid Search awareness
+- [x] Reranking understanding
+- [x] Production RAG mental model
+
+### Completion Gate
+
+The only actual implementation closure item remaining is the final automated E2E regression suite.
+
+After it passes:
+
+**Project 2 — RAG → COMPLETE**
+
+Then move to:
+
+**Project 3 — Agent + Tools + MCP**
+
+---
+
+# P2 — Final Interview Questions
+
+## Basic
+
+### 1. What is RAG?
+RAG retrieves relevant external knowledge and gives it to the LLM before generating the answer.
+
+### 2. Why use RAG?
+To use private, external, or changing knowledge without retraining the LLM.
+
+### 3. RAG vs fine-tuning?
+RAG changes the information available at runtime. Fine-tuning changes model behavior/weights.
+
+### 4. What is an embedding?
+A numerical vector representing the semantic meaning of text.
+
+### 5. What is a vector store?
+A system that stores embeddings and supports similarity search.
+
+### 6. Why PGVector?
+It provides vector search inside PostgreSQL and gives persistent storage.
+
+### 7. What is cosine similarity?
+A measure of similarity between vector directions.
+
+### 8. What is Top-K?
+The maximum number of retrieval results returned.
+
+### 9. What is a similarity threshold?
+A minimum similarity score used to reject weak results.
+
+---
+
+## Chunking
+
+### 10. Why chunk documents?
+To create smaller searchable units and improve retrieval relevance.
+
+### 11. What if chunks are too large?
+More unrelated information and larger context.
+
+### 12. What if chunks are too small?
+Important information can be split across chunks.
+
+### 13. Why overlap?
+To preserve information across chunk boundaries.
+
+### 14. What chunking strategies do you know?
+Fixed-size, token-based, sentence/paragraph, semantic, and parent-child.
+
+---
+
+## Retrieval
+
+### 15. What is metadata filtering?
+Filtering retrieved documents using metadata such as tenant, file type, or source.
+
+### 16. Why is metadata important?
+It improves retrieval precision and can enforce data boundaries.
+
+### 17. What is query transformation?
+Changing the user's query into a retrieval-friendly query.
+
+### 18. Why multi-query?
+Different query formulations can improve retrieval recall.
+
+### 19. What is reranking?
+Reordering retrieved candidates using a stronger relevance model.
+
+### 20. What is hybrid search?
+Combining vector/semantic search with keyword/lexical search.
+
+### 21. Vector search vs keyword search?
+Vector search understands semantic similarity; keyword search is strong for exact terms.
+
+### 22. What is BM25?
+A commonly used keyword-based ranking algorithm.
+
+### 23. What is RRF?
+Reciprocal Rank Fusion combines rankings from multiple retrieval methods.
+
+---
+
+## Context & Grounding
+
+### 24. What is context engineering?
+Selecting and structuring the right information before sending it to the LLM.
+
+### 25. Why not send every retrieved chunk?
+It increases noise, latency, and token cost.
+
+### 26. What is grounding?
+Making the answer depend on the retrieved evidence.
+
+### 27. Can RAG completely prevent hallucination?
+No. It reduces hallucination but cannot guarantee elimination.
+
+### 28. What is prompt injection in RAG?
+Instructions inside retrieved content that attempt to manipulate the model.
+
+---
+
+## Citations
+
+### 29. Why citations?
+To show where the answer's information came from.
+
+### 30. Where should citation data come from?
+From trusted retrieval/document metadata rather than invented by the LLM.
+
+---
+
+## Lifecycle
+
+### 31. Why do we need DocumentRegistry?
+To track document identity and content changes.
+
+### 32. Why content hash?
+To detect whether document content changed.
+
+### 33. How do you detect duplicates?
+Compare tenant + filename + content hash.
+
+### 34. What happens when content changes?
+Remove/re-index the old version and register the new hash.
+
+### 35. Why separate DocumentRegistry and PGVector?
+Registry manages document lifecycle; PGVector manages vector storage and retrieval.
+
+---
+
+## Production
+
+### 36. How do you implement tenant isolation?
+Store tenant metadata with vectors and apply tenant-aware retrieval filtering.
+
+### 37. Is tenant filtering alone enough?
+No. Production tenant identity must be established through authentication/authorization.
+
+### 38. How do you reduce RAG latency?
+Optimize retrieval, K, query count, reranking, context size, and model latency.
+
+### 39. How do you reduce cost?
+Reduce unnecessary retrieval/context, control LLM calls, batch embeddings, and choose appropriate models.
+
+### 40. How do you evaluate RAG?
+Evaluate retrieval quality and answer quality separately.
+
+### 41. What is Precision@K?
+How many retrieved top-K results are relevant.
+
+### 42. What is Recall@K?
+How many relevant results were successfully retrieved within K.
+
+### 43. What is MRR?
+It measures how high the first relevant result appears.
+
+---
+
+## Project Questions
+
+### 44. Explain your RAG architecture.
+
+```text
+Ingestion
+→ Parsing
+→ Chunking
+→ Embedding
+→ PGVector
+
+Query
+→ Transformation
+→ Multi-query
+→ Retrieval
+→ Reranking
+→ Context
+→ LLM
+→ Answer + Citations
+```
+
+### 45. Why did you choose PGVector?
+Because it provides persistent vector storage and integrates vector retrieval with PostgreSQL.
+
+### 46. How does duplicate detection work?
+The registry checks tenant, filename and content hash.
+
+### 47. How does document update work?
+A changed hash triggers re-indexing.
+
+### 48. How does your system prevent cross-tenant retrieval?
+Tenant metadata is attached to documents and retrieval is filtered by tenant.
+
+### 49. How does your system reduce hallucination?
+It retrieves relevant context, instructs the model to ground its answer, and handles insufficient context explicitly.
+
+### 50. How would you debug a bad RAG answer?
+
+Trace:
+
+```text
+Query
+→ transformed query
+→ generated queries
+→ retrieved documents
+→ reranking
+→ final context
+→ LLM response
+```
+
+### 51. What would you improve next?
+Hybrid search implementation, stronger production indexing, more advanced evaluation, and further performance/cost optimization as scale requires.
+
+---
+
+# Final P2 Interview Answer
+
+If the interviewer asks:
+
+**“Tell me about your RAG project.”**
+
+Answer:
+
+> “I built a production-oriented RAG knowledge assistant using Spring AI. Documents are parsed, chunked and embedded, then stored persistently in PostgreSQL using PGVector. During querying, the system transforms the query, generates multiple queries, retrieves tenant-aware candidates, reranks them, builds controlled context and sends it to the LLM. The response includes source citations. I also implemented document lifecycle management using a persistent registry and content hashes for duplicate detection and re-indexing. The system also covers grounding, evaluation, observability, tenant isolation, and production performance and cost considerations.”
+
+---
+
+## P2 Final Mental Model
+
+```text
+Knowledge
+   ↓
+Ingestion
+   ↓
+Chunking
+   ↓
+Embedding
+   ↓
+PGVector
+   ↓
+Query
+   ↓
+Retrieval
+   ↓
+Reranking
+   ↓
+Context
+   ↓
+Grounded LLM
+   ↓
+Answer + Citations
+   ↓
+Evaluation + Observability
+```
+
+**P2 = The core production RAG foundation is now persistent, observable, lifecycle-aware, and ready for the final P2 integration work.

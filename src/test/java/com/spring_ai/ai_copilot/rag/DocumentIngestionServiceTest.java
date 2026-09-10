@@ -21,16 +21,18 @@ class DocumentIngestionServiceTest {
     @Mock
     private DocumentLifeCycleService documentLifeCycleService;
 
-    @InjectMocks
     DocumentIngestionService service;
 
     @BeforeEach
     public void setup(){
-        when(documentLifeCycleService.isFileAlreadyIngested(any(),any(),any())).thenReturn(true);
+        // initialize service with a simple meter registry so counters/timers are available
+        service = new DocumentIngestionService(documentLifeCycleService, new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
     }
 
     @Test
     void testGetDocuments_readsTxtFiles() throws Exception {
+        // ensure file is considered not already ingested so ingestion proceeds
+        when(documentLifeCycleService.isFileAlreadyIngested(any(),any(),any())).thenReturn(false);
         List<Document> docs = service.getDocuments("testdocs","1");
         Assertions.assertFalse(docs.isEmpty(), "Documents should not be empty");
         Assertions.assertTrue(docs.stream().anyMatch(d -> "a.txt".equals(d.getMetadata().get("filename"))));

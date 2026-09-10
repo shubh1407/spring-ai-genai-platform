@@ -2,6 +2,7 @@ package com.spring_ai.ai_copilot.client;
 
 import com.spring_ai.ai_copilot.dto.ChatRequest;
 import com.spring_ai.ai_copilot.dto.FeedbackAnalysis;
+import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -63,7 +64,8 @@ class AiProviderClientTest {
                 MessageChatMemoryAdvisor.builder(MessageWindowChatMemory.builder().build()).build(),
                 CircuitBreakerRegistry.ofDefaults(),
                 RateLimiterRegistry.ofDefaults(),
-                registry
+                registry,
+                new AiExceptionTranslator()
         );
 
         client.recordAiMetrics("chat.response", "success", null, 250L);
@@ -159,7 +161,8 @@ class AiProviderClientTest {
                 MessageChatMemoryAdvisor.builder(MessageWindowChatMemory.builder().build()).build(),
                 CircuitBreakerRegistry.ofDefaults(),
                 RateLimiterRegistry.ofDefaults(),
-                new SimpleMeterRegistry()
+                new SimpleMeterRegistry(),
+                new AiExceptionTranslator()
         );
     }
 }
