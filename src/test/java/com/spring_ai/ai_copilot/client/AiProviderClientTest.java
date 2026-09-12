@@ -1,5 +1,6 @@
 package com.spring_ai.ai_copilot.client;
 
+import com.spring_ai.ai_copilot.agent.tools.KnowledgeSearchTool;
 import com.spring_ai.ai_copilot.dto.ChatRequest;
 import com.spring_ai.ai_copilot.dto.FeedbackAnalysis;
 import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
@@ -8,6 +9,8 @@ import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.StructuredOutputValidationAdvisor;
@@ -65,7 +68,8 @@ class AiProviderClientTest {
                 CircuitBreakerRegistry.ofDefaults(),
                 RateLimiterRegistry.ofDefaults(),
                 registry,
-                new AiExceptionTranslator()
+                new AiExceptionTranslator(),
+                Mockito.mock(KnowledgeSearchTool.class)
         );
 
         client.recordAiMetrics("chat.response", "success", null, 250L);
@@ -162,7 +166,8 @@ class AiProviderClientTest {
                 CircuitBreakerRegistry.ofDefaults(),
                 RateLimiterRegistry.ofDefaults(),
                 new SimpleMeterRegistry(),
-                new AiExceptionTranslator()
+                new AiExceptionTranslator(),
+                Mockito.mock(KnowledgeSearchTool.class)
         );
     }
 }

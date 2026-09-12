@@ -1,5 +1,6 @@
 package com.spring_ai.ai_copilot.controller;
 
+import com.spring_ai.ai_copilot.agent.tools.TenantContext;
 import com.spring_ai.ai_copilot.dto.ChatResponse;
 import com.spring_ai.ai_copilot.dto.RagRequest;
 import com.spring_ai.ai_copilot.dto.RagResponse;
@@ -31,8 +32,11 @@ public class RagController {
 
     private final RagService ragService;
 
-    public RagController(RagService ragService) {
+    private final TenantContext tenantContext;
+
+    public RagController(RagService ragService, TenantContext tenantContext) {
         this.ragService = ragService;
+        this.tenantContext = tenantContext;
     }
 
     @GetMapping("rag")
@@ -89,6 +93,7 @@ public class RagController {
 
     @PostMapping("ask")
     public RagResponse askQuestion(@Valid @RequestBody RagRequest ragRequest){
+        tenantContext.setTenantId(ragRequest.tenantId());
         return ragService.ask(ragRequest);
     }
 

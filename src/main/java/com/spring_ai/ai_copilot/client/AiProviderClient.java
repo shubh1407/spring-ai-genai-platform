@@ -1,5 +1,6 @@
 package com.spring_ai.ai_copilot.client;
 
+import com.spring_ai.ai_copilot.agent.tools.KnowledgeSearchTool;
 import com.spring_ai.ai_copilot.dto.ChatRequest;
 import com.spring_ai.ai_copilot.dto.ChatResponse;
 import com.spring_ai.ai_copilot.dto.FeedbackAnalysis;
@@ -10,6 +11,7 @@ import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
 import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import io.github.resilience4j.reactor.circuitbreaker.operator.CircuitBreakerOperator;
 import io.github.resilience4j.reactor.ratelimiter.operator.RateLimiterOperator;
+import io.github.resilience4j.retry.annotation.Retry;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,14 +39,15 @@ public class AiProviderClient {
     private final io.github.resilience4j.ratelimiter.RateLimiter rateLimiter;
     private final MeterRegistry meterRegistry;
     private final AiExceptionTranslator aiExceptionTranslator;
+    private final KnowledgeSearchTool knowledgeSearchTool;
 
     public AiProviderClient(ChatClient.Builder chatClientBuilder,
-                          StructuredOutputValidationAdvisor validationAdvisor,
-                          MessageChatMemoryAdvisor messageChatMemoryAdvisor,
-                          CircuitBreakerRegistry registry,
-                          RateLimiterRegistry rateLimiterRegistry,
-                          MeterRegistry meterRegistry,
-                          AiExceptionTranslator aiExceptionTranslator) {
+                            StructuredOutputValidationAdvisor validationAdvisor,
+                            MessageChatMemoryAdvisor messageChatMemoryAdvisor,
+                            CircuitBreakerRegistry registry,
+                            RateLimiterRegistry rateLimiterRegistry,
+                            MeterRegistry meterRegistry,
+                            AiExceptionTranslator aiExceptionTranslator, KnowledgeSearchTool knowledgeSearchTool) {
         this.client = chatClientBuilder.build();
         this.validationAdvisor = validationAdvisor;
         this.messageChatMemoryAdvisor = messageChatMemoryAdvisor;
@@ -52,6 +55,7 @@ public class AiProviderClient {
         this.rateLimiter = rateLimiterRegistry.rateLimiter("aiProvider");
         this.meterRegistry = meterRegistry;
         this.aiExceptionTranslator = aiExceptionTranslator;
+        this.knowledgeSearchTool = knowledgeSearchTool;
     }
 
     @Bulkhead(name = "aiProvider")
@@ -199,6 +203,41 @@ public class AiProviderClient {
                     log.warn("ai.provider.request.failed operation={} provider={} model={} latencyMs={} errorCode={} exception={}",
                             operation, PROVIDER, MODEL, latencyMs, errorCode, error.getClass().getSimpleName());
                 });
+    }
+
+    @Bulkhead(name = "aiProvider")
+    @RateLimiter(name= "aiProvider")
+    @CircuitBreaker(name="aiProvider")
+    public ChatResponse getChatResponseWithToolCall(String systemPrompt,String prompt, String conversationId) {
+
+        String operation = "chat.response.tool.call";
+        long startedAt = System.nanoTime();
+        log.info("ai.provider.request.started operation={} provider={} model={} conversationId={}", operation, PROVIDER, MODEL, conversationId);
+        try {
+            String response = client.prompt()
+                    .system(systemPrompt)
+                    .user(prompt)
+                    .tools(knowledgeSearchTool)
+                    .advisors(messageChatMemoryAdvisor)
+                    .advisors(advisorSpec ->
+                            advisorSpec.param(ChatMemory.CONVERSATION_ID, conversationId))
+                    .call()
+                    .content();
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            recordAiMetrics(operation, "success", null, latencyMs);
+            log.info("ai.provider.request.completed operation={} provider={} model={} latencyMs={} status=success", operation, PROVIDER, MODEL, latencyMs);
+            return new ChatResponse(response);
+        } catch (Exception e) {
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            String errorCode = "AI_PROVIDER_ERROR";
+            recordAiMetrics(operation, "error", errorCode, latencyMs);
+            log.warn("ai.provider.request.failed operation={} provider={} model={} latencyMs={} errorCode={} exception={}",
+                    operation, PROVIDER, MODEL, latencyMs, errorCode, e.getClass().getSimpleName());
+            throw e;
+        }
+
+
     }
 
     void recordAiMetrics(String operation, String status, String errorCode, long latencyMs) {
