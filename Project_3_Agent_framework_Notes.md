@@ -637,3 +637,507 @@ The P2 knowledge system now has its first agentic capability:
 > The LLM can decide to use the application's `searchKnowledge` capability, the application executes it against tenant-scoped PGVector data, and the result is returned to the LLM for final response generation.
 
 # P3 Day 1 — COMPLETE
+
+# Day 2 — Spring AI Tools
+
+## 1. Tool Fundamentals
+
+A tool exposes an application capability that an LLM can invoke when it needs information or an action.
+
+```text
+User
+  ↓
+LLM / Agent
+  ↓
+Tool decision
+  ↓
+Application Tool
+  ↓
+Tool result
+  ↓
+LLM
+  ↓
+Final answer
+```
+
+The LLM decides whether a tool is useful; the application owns execution.
+
+## 2. Spring AI Tool API
+
+### `@Tool`
+
+```java
+@Tool(
+    name = "searchKnowledge",
+    description = "Search the company's internal knowledge base for relevant policies, documentation, and business information."
+)
+public ToolResponse searchKnowledge(String query) {
+    ...
+}
+```
+
+- `name`: model-facing tool name.
+- `description`: explains the capability and helps tool selection.
+
+### `@ToolParam`
+
+```java
+@ToolParam(
+    required = true,
+    description = "The user's question or information to search for in the internal knowledge base."
+)
+String query
+```
+
+It defines the input parameter exposed to the model.
+
+## 3. Registering the Tool
+
+Current Spring AI usage:
+
+```java
+client.prompt()
+    .system(systemPrompt)
+    .user(prompt)
+    .tools(knowledgeSearchTool)
+    .advisors(...)
+    .call()
+    .content();
+```
+
+`.tools(...)` makes the tool available for that invocation. Availability does not guarantee execution; the model decides whether to call it.
+
+## 4. Tool Execution Lifecycle
+
+```text
+1. Application sends prompt + tool definitions
+2. LLM decides whether a tool is required
+3. LLM generates a tool call
+4. Spring AI receives the tool call
+5. Spring AI executes the Java method
+6. Tool result is converted to a tool-result message
+7. LLM receives the result
+8. LLM generates the final response
+```
+
+Verified in this project through logs:
+
+```text
+Executing tool call: searchKnowledge
+Starting execution of tool: searchKnowledge
+Successful execution of tool: searchKnowledge
+Converting tool result to JSON
+```
+
+## 5. Normal Chat vs Tool-enabled Request
+
+Normal path:
+
+```text
+Controller
+  ↓
+ChatService
+  ↓
+AiProviderClient
+  ↓
+ChatClient
+  ↓
+LLM
+```
+
+Agent path:
+
+```text
+Controller
+  ↓
+AgentService
+  ↓
+AiProviderClient
+  ↓
+ChatClient
+  ↓
+LLM
+  ↓
+KnowledgeSearchTool (when selected)
+  ↓
+Tool result
+  ↓
+LLM
+  ↓
+Final answer
+```
+
+The normal `/chat` and tool-enabled `/agent-ask` paths remain separate.
+
+---
+
+# Day 3 — Tool Design & Contracts
+
+## 1. Tool as a Contract
+
+A tool is not merely a Java method exposed to an LLM. It is a model-facing contract.
+
+The contract defines:
+
+- What the tool does
+- When it should be used
+- What inputs it accepts
+- Which inputs are required
+- What validation is enforced
+- What result it returns
+- What belongs to the LLM vs the application
+
+## 2. Tool Description
+
+Current tool:
+
+```java
+@Tool(
+    name = "searchKnowledge",
+    description = "Search the company's internal knowledge base for relevant policies, documentation, and business information."
+)
+```
+
+Good tool descriptions should be specific, action-oriented and useful for tool selection.
+
+## 3. Input Contract
+
+Current input:
+
+```java
+@ToolParam(
+    required = true,
+    description = "The user's question or information to search for in the internal knowledge base."
+)
+String query
+```
+
+Application validation remains necessary because model-generated input cannot be treated as trusted input.
+
+Current validation:
+
+```java
+if (query == null || query.isBlank()) {
+    throw new ToolValidationException(
+        "Search query must not be blank"
+    );
+}
+
+if (query.length() > 500) {
+    throw new ToolValidationException(
+        "Search query is too long"
+    );
+}
+```
+
+## 4. Tool Validation Exception
+
+Invalid tool input is different from an AI provider failure.
+
+```text
+Invalid tool input
+    → ToolValidationException
+    → TOOL_VALIDATION_ERROR
+    → HTTP 400
+
+LLM/provider failure
+    → AI_PROVIDER_ERROR
+```
+
+This keeps error classification meaningful.
+
+## 5. Tool Granularity
+
+A tool should represent a meaningful application capability.
+
+Too broad:
+
+```text
+doEverything()
+```
+
+Too low-level:
+
+```text
+executeSql()
+```
+
+Better:
+
+```text
+searchKnowledge()
+```
+
+The LLM selects a capability; the application owns implementation details.
+
+## 6. LLM vs Application Responsibility
+
+### LLM
+
+- Understand the request
+- Decide whether a tool is needed
+- Select a tool
+- Supply parameters
+- Interpret the result
+- Generate the final response
+
+### Application
+
+- Validate inputs
+- Enforce tenant/security boundaries
+- Execute deterministic logic
+- Access databases/vector stores/APIs
+- Apply retrieval algorithms
+- Enforce business rules
+- Return structured results
+
+Security and authorization must not depend on the LLM.
+
+## 7. Reusing P2 Retrieval
+
+The first tool implementation directly called the vector store:
+
+```text
+KnowledgeSearchTool
+  ↓
+SearchRequest
+  ↓
+DocumentVectorStoreService
+  ↓
+PGVector
+```
+
+That bypassed P2's retrieval intelligence.
+
+Final architecture:
+
+```text
+KnowledgeSearchTool
+  ↓
+RagRetrievalService
+  ↓
+QueryTransformer
+  ↓
+MultiQueryGenerator
+  ↓
+MultiQueryRetriever
+  ↓
+DocumentReranker
+  ↓
+Documents
+```
+
+Therefore P3 reuses the same P2 retrieval pipeline instead of creating a second simplified search implementation.
+
+## 8. Why the Tool Does Not Call `RagService.ask()`
+
+`ask()` performs the complete RAG operation, including the LLM call.
+
+Calling it from a tool would create:
+
+```text
+Agent LLM
+  ↓
+Tool
+  ↓
+RagService.ask()
+  ↓
+Retrieval
+  ↓
+Another LLM call
+  ↓
+Tool result
+  ↓
+Agent LLM
+```
+
+That would create unnecessary nested LLM inference.
+
+The reusable boundary is the retrieval operation, not the complete RAG answer operation.
+
+## 9. `RagRetrievalService`
+
+The retrieval pipeline was extracted into a reusable service so P2 RAG and the P3 tool can share exactly the same retrieval intelligence.
+
+```text
+P2 RAG:
+
+RagService
+   ↓
+RagRetrievalService
+   ↓
+Query Transform
+   ↓
+Multi Query
+   ↓
+Retrieval
+   ↓
+Re-ranking
+   ↓
+Context
+   ↓
+LLM
+```
+
+```text
+P3 Agent:
+
+AgentService
+   ↓
+AiProviderClient
+   ↓
+KnowledgeSearchTool
+   ↓
+RagRetrievalService
+   ↓
+Query Transform
+   ↓
+Multi Query
+   ↓
+Retrieval
+   ↓
+Re-ranking
+   ↓
+Documents + Citations
+   ↓
+Agent LLM
+```
+
+The `AiProviderClient` no longer holds `KnowledgeSearchTool` as a constructor dependency. The tool is supplied to the tool-enabled request, preventing the Spring bean dependency cycle.
+
+## 10. Tool Output
+
+The tool returns a structured `ToolResponse` containing:
+
+```text
+Documents
++
+Citations
+```
+
+Current flow:
+
+```java
+List<Document> finalDocuments =
+        ragRetrievalService.retrieveDocument(
+            query,
+            tenantContext.getTenantId()
+        );
+
+List<Citation> citations =
+        citationBuilder.extractSources(finalDocuments);
+
+return new ToolResponse(finalDocuments, citations);
+```
+
+No separate LLM-generated answer is produced by the tool.
+
+## 11. Tenant Boundary
+
+Tenant ID comes from application-controlled `TenantContext`.
+
+The LLM does not provide the tenant ID as a tool parameter.
+
+```text
+Agent
+  ↓
+searchKnowledge(query)
+  ↓
+Application TenantContext
+  ↓
+Tenant-specific retrieval
+```
+
+Full authentication-derived tenant identity is a later P4 security concern.
+
+## 12. Read vs Write Tools
+
+`searchKnowledge` is a read-only tool.
+
+Examples of read tools:
+
+```text
+searchKnowledge()
+getOrder()
+getCustomer()
+```
+
+Write/action tools have greater risk:
+
+```text
+refundCustomer()
+deleteUser()
+sendEmail()
+updateOrder()
+```
+
+Write tools require stronger validation, authorization, approval and idempotency controls.
+
+## 13. Idempotency
+
+An idempotent operation can safely be repeated without unintended additional side effects.
+
+`searchKnowledge` is read-only and has no external side effect.
+
+For future action tools, idempotency becomes important because an agent may retry or repeat a call.
+
+## 14. Tool Error Contract
+
+Conceptually, tool failures should be distinguishable from provider failures:
+
+```text
+Invalid tool input
+→ TOOL_VALIDATION_ERROR
+
+Unauthorized tool action
+→ TOOL_AUTHORIZATION_ERROR
+
+External tool failure
+→ TOOL_EXECUTION_ERROR
+
+LLM/provider failure
+→ AI_PROVIDER_ERROR
+```
+
+The exact taxonomy can evolve when action tools are introduced.
+
+---
+
+# Day 3 Final Architecture
+
+```text
+                       Agent / LLM
+                            │
+                            │ decides
+                            ▼
+                  KnowledgeSearchTool
+                            │
+                     validate input
+                            │
+                            ▼
+                   RagRetrievalService
+                            │
+              ┌─────────────┼─────────────┐
+              ▼             ▼             ▼
+       Query Transform   Multi Query    Re-ranking
+                            │
+                            ▼
+                     Vector Retrieval
+                            │
+                            ▼
+                         PGVector
+                            │
+                            ▼
+                     Documents
+                            │
+                            ▼
+                      Citations
+                            │
+                            ▼
+                       ToolResponse
+                            │
+                            ▼
+                          Agent
+```
+
+## Day 3 Status: COMPLETE

@@ -187,6 +187,36 @@ public class GlobalExceptionHandler {
                .body(response);
     }
 
+    @ExceptionHandler(ToolValidationException.class)
+    public ResponseEntity<ErrorResponse> handleToolValidationException(
+            ToolValidationException e) {
+
+        HttpStatus status = HttpStatus.BAD_REQUEST;
+        String errorCode = "TOOL_VALIDATION_ERROR";
+        String operation = "tool.validation";
+
+        recordErrorMetrics(operation, errorCode, status);
+
+        log.warn(
+                "global.exception.handler.failed operation={} status={} errorCode={} exception={}",
+                operation,
+                status.value(),
+                errorCode,
+                e.getClass().getSimpleName()
+        );
+
+        ErrorResponse response = new ErrorResponse(
+                LocalDateTime.now(),
+                status.value(),
+                errorCode,
+                List.of(e.getMessage())
+        );
+
+        return ResponseEntity
+                .status(status)
+                .body(response);
+    }
+
     private ResponseEntity<ErrorResponse> buildErrorResponse(String errorCode, HttpStatus status, List<String> messages, String operation, Throwable ex) {
        recordErrorMetrics(operation, errorCode, status);
        if ("VALIDATION_ERROR".equals(errorCode)) {
@@ -227,16 +257,20 @@ public class GlobalExceptionHandler {
                "status", String.valueOf(status.value()),
                "errorCode", errorCode).increment();
 
-       if ("VALIDATION_ERROR".equals(errorCode)) {
-           meterRegistry.counter("app.validation.errors",
-                   "operation", operation,
-                   "status", String.valueOf(status.value()),
-                   "errorCode", errorCode).increment();
-       } else if (errorCode != null && errorCode.startsWith("AI_")) {
-           meterRegistry.counter("app.ai.provider.errors",
-                   "operation", operation,
-                   "status", String.valueOf(status.value()),
-                   "errorCode", errorCode).increment();
-       }
+        if ("VALIDATION_ERROR".equals(errorCode)
+                || "TOOL_VALIDATION_ERROR".equals(errorCode)) {
+
+            meterRegistry.counter("app.validation.errors",
+                    "operation", operation,
+                    "status", String.valueOf(status.value()),
+                    "errorCode", errorCode).increment();
+
+        } else if (errorCode != null && errorCode.startsWith("AI_")) {
+
+            meterRegistry.counter("app.ai.provider.errors",
+                    "operation", operation,
+                    "status", String.valueOf(status.value()),
+                    "errorCode", errorCode).increment();
+        }
     }
 }

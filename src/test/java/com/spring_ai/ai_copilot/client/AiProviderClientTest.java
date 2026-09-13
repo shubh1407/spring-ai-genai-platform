@@ -68,8 +68,7 @@ class AiProviderClientTest {
                 CircuitBreakerRegistry.ofDefaults(),
                 RateLimiterRegistry.ofDefaults(),
                 registry,
-                new AiExceptionTranslator(),
-                Mockito.mock(KnowledgeSearchTool.class)
+                new AiExceptionTranslator()
         );
 
         client.recordAiMetrics("chat.response", "success", null, 250L);
@@ -166,8 +165,7 @@ class AiProviderClientTest {
                 CircuitBreakerRegistry.ofDefaults(),
                 RateLimiterRegistry.ofDefaults(),
                 new SimpleMeterRegistry(),
-                new AiExceptionTranslator(),
-                Mockito.mock(KnowledgeSearchTool.class)
+                new AiExceptionTranslator()
         );
     }
 }

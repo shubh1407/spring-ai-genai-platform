@@ -5,12 +5,16 @@ import com.spring_ai.ai_copilot.dto.ChatResponse;
 import com.spring_ai.ai_copilot.dto.Citation;
 import com.spring_ai.ai_copilot.dto.RagRequest;
 import com.spring_ai.ai_copilot.dto.RagResponse;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Timer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.document.Document;
+import io.micrometer.core.instrument.MeterRegistry;
+import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 
 import java.util.List;
 import java.util.Map;
@@ -21,14 +25,6 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith(MockitoExtension.class)
 class RagServiceTest {
 
-    @Mock
-    DocumentIngestionService ingestionService;
-    @Mock
-    DocumentChunkingService chunkingService;
-    @Mock
-    DocumentEmbeddingService embeddingService;
-    @Mock
-    DocumentVectorStoreService vectorStoreService;
     @Mock
     AiProviderClient aiProviderClient;
     @Mock
@@ -44,30 +40,37 @@ class RagServiceTest {
     @Mock
     MultiQueryRetriever multiQueryRetriever;
     @Mock
-    io.micrometer.core.instrument.MeterRegistry meterRegistry;
+    MeterRegistry meterRegistry;
     @Mock
-    com.spring_ai.ai_copilot.exception.AiExceptionTranslator aiExceptionTranslator;
+    AiExceptionTranslator aiExceptionTranslator;
 
+    @Mock
+    private Counter counter;
+
+    @Mock
+    private Timer timer;
+
+    @Mock
+    RagRetrievalService ragRetrievalService;
+
+    @InjectMocks
     RagService ragService;
-
-    @org.junit.jupiter.api.BeforeEach
-    void init() {
-        ragService = new RagService(ingestionService, chunkingService, embeddingService, vectorStoreService, aiProviderClient, ctxBuilder, citationBuilder, queryTransformer, documentReranker, multiQueryGenerator, multiQueryRetriever, new io.micrometer.core.instrument.simple.SimpleMeterRegistry(), aiExceptionTranslator);
-    }
 
     @Test
     void ask_returns_rag_response_with_citations() {
         RagRequest req = new RagRequest("conv1","what is refund?","tenantX");
 
-        when(queryTransformer.transform(req.question())).thenReturn("refund?");
-        when(multiQueryGenerator.generateMultiQuery("refund?")).thenReturn(List.of("refund?"));
-
         Document d = mock(Document.class);
-        when(multiQueryRetriever.searchDocuments(anyList(), eq("tenantX"))).thenReturn(List.of(d));
-        when(documentReranker.rerank(anyList(), anyList(), eq(5))).thenReturn(List.of(d));
+        when(ragRetrievalService.retrieveDocument(req.question(),req.tenantId())).thenReturn(List.of(d));
         when(ctxBuilder.buildContext(anyList())).thenReturn("context text");
         when(aiProviderClient.getChatResponse(anyString(), anyString(), anyString())).thenReturn(new ChatResponse("answer text"));
         when(citationBuilder.extractSources(anyList())).thenReturn(List.of(new Citation("company-policy.txt", "company-policy.txt", "txt", "", "")));
+
+        when(meterRegistry.counter(anyString(), any(String[].class)))
+                .thenReturn(counter);
+
+        when(meterRegistry.timer(anyString(), any(String[].class)))
+                .thenReturn(timer);
 
         RagResponse resp = ragService.ask(req);
 

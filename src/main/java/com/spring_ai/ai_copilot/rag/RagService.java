@@ -43,16 +43,13 @@ public class RagService {
     private final AiProviderClient aiProviderClient;
     private final ContextBuilder ctxBuilder;
     private final CitationBuilder citationBuilder;
-    private final QueryTransformer queryTransformer;
-    private final DocumentReranker documentReranker;
-    private final MultiQueryGenerator multiQueryGenerator;
-    private final MultiQueryRetriever multiQueryRetriever;
     private final MeterRegistry meterRegistry;
     private final AiExceptionTranslator aiExceptionTranslator;
+    private final RagRetrievalService ragRetrievalService;
 
     private static final Logger log = LoggerFactory.getLogger(RagService.class);
 
-    public RagService(DocumentIngestionService documentIngestionService, DocumentChunkingService documentChunkingService, DocumentEmbeddingService documentEmbeddingService, DocumentVectorStoreService documentVectorStoreService, AiProviderClient aiProviderClient, ContextBuilder ctxBuilder, CitationBuilder citationBuilder, QueryTransformer queryTransformer, DocumentReranker documentReranker, MultiQueryGenerator multiQueryGenerator, MultiQueryRetriever multiQueryRetriever, MeterRegistry meterRegistry, AiExceptionTranslator aiExceptionTranslator) {
+    public RagService(DocumentIngestionService documentIngestionService, DocumentChunkingService documentChunkingService, DocumentEmbeddingService documentEmbeddingService, DocumentVectorStoreService documentVectorStoreService, AiProviderClient aiProviderClient, ContextBuilder ctxBuilder, CitationBuilder citationBuilder, MeterRegistry meterRegistry, AiExceptionTranslator aiExceptionTranslator, RagRetrievalService ragRetrievalService) {
         this.documentIngestionService = documentIngestionService;
         this.documentChunkingService = documentChunkingService;
         this.documentEmbeddingService = documentEmbeddingService;
@@ -60,13 +57,11 @@ public class RagService {
         this.aiProviderClient = aiProviderClient;
         this.ctxBuilder = ctxBuilder;
         this.citationBuilder = citationBuilder;
-        this.queryTransformer = queryTransformer;
-        this.documentReranker = documentReranker;
-        this.multiQueryGenerator = multiQueryGenerator;
-        this.multiQueryRetriever = multiQueryRetriever;
         this.meterRegistry = meterRegistry;
         this.aiExceptionTranslator = aiExceptionTranslator;
+        this.ragRetrievalService = ragRetrievalService;
     }
+
 
     public List<Document> ragDocuments(String path, String tenantId) throws IOException {
         log.info("rag.ingestion.request.started operation=ingestion path={} tenant={}", path, tenantId);
@@ -102,19 +97,11 @@ public class RagService {
 
     public RagResponse ask(RagRequest ragRequest) {
         long startedAt = System.nanoTime();
-        log.info("rag.ask.started operation=ask tenant={} conversationId={}", ragRequest.tenantId(), ragRequest.conversationId());
+        String tenantId = ragRequest.tenantId();
+        log.info("rag.ask.started operation=ask tenant={} conversationId={}", tenantId, ragRequest.conversationId());
         try {
-            String transformedQuery = queryTransformer.transform(ragRequest.question());
-            log.info("rag.ask.query.transform.completed operation=ask tenant={} questionLength={} status=success", ragRequest.tenantId(), transformedQuery.length());
-
-            List<String> queries = multiQueryGenerator.generateMultiQuery(transformedQuery);
-            log.info("rag.ask.multi.query.completed operation=ask tenant={} queryCount={} status=success", ragRequest.tenantId(), queries.size());
-
-            List<Document> candidates = multiQueryRetriever.searchDocuments(queries, ragRequest.tenantId());
-            log.info("rag.ask.retrieval.completed operation=ask tenant={} candidateCount={} status=success", ragRequest.tenantId(), candidates.size());
-
-            List<Document> finalDocuments = documentReranker.rerank(queries, candidates, 5);
-            log.info("rag.ask.reranking.completed operation=ask tenant={} finalDocuments={} status=success", ragRequest.tenantId(), finalDocuments.size());
+            List<Document> finalDocuments=ragRetrievalService.retrieveDocument(ragRequest.question(), tenantId);
+            log.info("rag.ask.reranking.completed operation=ask tenant={} finalDocuments={} status=success", tenantId, finalDocuments.size());
 
             String context = ctxBuilder.buildContext(finalDocuments);
             log.info("rag.ask.context.completed operation=ask tenant={} contextLength={} status=success", ragRequest.tenantId(), context.length());
@@ -156,10 +143,8 @@ public class RagService {
         long startedAt = System.nanoTime();
         log.info("rag.evaluation.started operation=evaluation tenant={} topK={} expectedSources={}", tenantId, topK, expectedSources);
         try {
-            String transformedQuery = queryTransformer.transform(question);
-            List<String> queries = multiQueryGenerator.generateMultiQuery(transformedQuery);
-            List<Document> candidates = multiQueryRetriever.searchDocuments(queries, tenantId);
-            List<Document> finalDocuments = documentReranker.rerank(queries, candidates, topK);
+            List<Document> finalDocuments=ragRetrievalService.retrieveDocument(question, tenantId);
+            log.info("rag.ask.reranking.completed operation=ask tenant={} finalDocuments={} status=success", tenantId, finalDocuments.size());
 
             Set<String> expectedSet = new HashSet<>();
             if (expectedSources != null && !expectedSources.isBlank()) {
@@ -214,4 +199,6 @@ public class RagService {
             throw aiExceptionTranslator.translate(e);
         }
     }
+
+
 }

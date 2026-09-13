@@ -39,7 +39,6 @@ public class AiProviderClient {
     private final io.github.resilience4j.ratelimiter.RateLimiter rateLimiter;
     private final MeterRegistry meterRegistry;
     private final AiExceptionTranslator aiExceptionTranslator;
-    private final KnowledgeSearchTool knowledgeSearchTool;
 
     public AiProviderClient(ChatClient.Builder chatClientBuilder,
                             StructuredOutputValidationAdvisor validationAdvisor,
@@ -47,7 +46,7 @@ public class AiProviderClient {
                             CircuitBreakerRegistry registry,
                             RateLimiterRegistry rateLimiterRegistry,
                             MeterRegistry meterRegistry,
-                            AiExceptionTranslator aiExceptionTranslator, KnowledgeSearchTool knowledgeSearchTool) {
+                            AiExceptionTranslator aiExceptionTranslator) {
         this.client = chatClientBuilder.build();
         this.validationAdvisor = validationAdvisor;
         this.messageChatMemoryAdvisor = messageChatMemoryAdvisor;
@@ -55,7 +54,6 @@ public class AiProviderClient {
         this.rateLimiter = rateLimiterRegistry.rateLimiter("aiProvider");
         this.meterRegistry = meterRegistry;
         this.aiExceptionTranslator = aiExceptionTranslator;
-        this.knowledgeSearchTool = knowledgeSearchTool;
     }
 
     @Bulkhead(name = "aiProvider")
@@ -208,7 +206,7 @@ public class AiProviderClient {
     @Bulkhead(name = "aiProvider")
     @RateLimiter(name= "aiProvider")
     @CircuitBreaker(name="aiProvider")
-    public ChatResponse getChatResponseWithToolCall(String systemPrompt,String prompt, String conversationId) {
+    public ChatResponse getChatResponseWithToolCall(String systemPrompt,String prompt, String conversationId, Object ... tools) {
 
         String operation = "chat.response.tool.call";
         long startedAt = System.nanoTime();
@@ -217,7 +215,7 @@ public class AiProviderClient {
             String response = client.prompt()
                     .system(systemPrompt)
                     .user(prompt)
-                    .tools(knowledgeSearchTool)
+                    .tools(tools)
                     .advisors(messageChatMemoryAdvisor)
                     .advisors(advisorSpec ->
                             advisorSpec.param(ChatMemory.CONVERSATION_ID, conversationId))

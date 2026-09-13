@@ -19,6 +19,8 @@ public class AgentService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
 
+    private final KnowledgeSearchTool knowledgeSearchTool;
+
     private static final String SYSTEM_PROMPT="""
                             You are an expert Java and Generative AI assistant.
                              
@@ -37,7 +39,8 @@ public class AgentService {
     private final AiExceptionTranslator aiExceptionTranslator;
     private final AiProviderClient client;
 
-    public AgentService(AiExceptionTranslator aiExceptionTranslator, AiProviderClient client) {
+    public AgentService(KnowledgeSearchTool knowledgeSearchTool, AiExceptionTranslator aiExceptionTranslator, AiProviderClient client) {
+        this.knowledgeSearchTool = knowledgeSearchTool;
         this.aiExceptionTranslator = aiExceptionTranslator;
         this.client = client;
     }
@@ -56,7 +59,7 @@ public class AgentService {
                     .build();
 
             String prompt = promptTemplate.render(Map.of("message", chatRequest.message()));
-            ChatResponse response = client.getChatResponseWithToolCall(SYSTEM_PROMPT,prompt, chatRequest.conversationId());
+            ChatResponse response = client.getChatResponseWithToolCall(SYSTEM_PROMPT,prompt, chatRequest.conversationId(),knowledgeSearchTool);
             log.info("service.agent.response.completed operation=chat.response status=success");
             return response;
         } catch (Exception e) {
