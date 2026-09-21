@@ -1141,3 +1141,394 @@ The exact taxonomy can evolve when action tools are introduced.
 ```
 
 ## Day 3 Status: COMPLETE
+
+## Day 4 — Agent Fundamentals
+
+### Goal
+
+Understand the difference between a normal chatbot, a tool-enabled chatbot, and an agent.
+
+### Agent Concept
+
+A normal chatbot:
+
+```text
+User
+ ↓
+LLM
+ ↓
+Answer
+```
+
+A tool-enabled interaction:
+
+```text
+User
+ ↓
+LLM
+ ↓
+Tool
+ ↓
+Tool Result
+ ↓
+LLM
+ ↓
+Answer
+```
+
+An agent:
+
+```text
+User
+ ↓
+LLM
+ ↓
+Action
+ ↓
+Observation
+ ↓
+LLM
+ ↓
+Action / Final Answer
+```
+
+The key difference is that the LLM can decide whether an action/tool is required.
+
+### Existing P2 Capability Reused by P3
+
+The `searchKnowledge` tool reuses the existing P2 RAG infrastructure:
+
+```text
+Agent
+ ↓
+searchKnowledge
+ ↓
+RagRetrievalService
+ ↓
+QueryTransformer
+ ↓
+MultiQueryGenerator
+ ↓
+MultiQueryRetriever
+ ↓
+Re-ranking
+ ↓
+PGVector
+ ↓
+Citations
+```
+
+P2 provides the knowledge capability; P3 adds agentic orchestration.
+
+### Tool Registration
+
+Spring AI exposes a tool to the model through the `@Tool` annotation and registers it with the `ChatClient`:
+
+```java
+.tools(knowledgeSearchTool)
+```
+
+The model decides when the tool is needed.
+
+### Day 4 Testing
+
+Verified:
+
+- General Java question → direct answer without tool execution.
+- Internal refund-policy question → `searchKnowledge` executed.
+- Mixed/internal question → tool used and unavailable information was not invented.
+
+The application logs confirmed actual tool execution.
+
+---
+
+# Day 5 — Agent Loop & Multi-Step Execution
+
+## Goal
+
+Move from single-tool execution to multi-step agent execution.
+
+Single-tool flow:
+
+```text
+User
+ ↓
+LLM
+ ↓
+Tool
+ ↓
+Tool Result
+ ↓
+LLM
+ ↓
+Final Answer
+```
+
+Multi-step flow:
+
+```text
+User
+ ↓
+LLM
+ ↓
+Tool 1
+ ↓
+Tool Result
+ ↓
+LLM decides next action
+ ↓
+Tool 2
+ ↓
+Tool Result
+ ↓
+LLM
+ ↓
+Final Answer
+```
+
+## Agent Loop
+
+The fundamental pattern is:
+
+```text
+Action → Observation → Decision
+```
+
+- **Action:** LLM requests a tool call.
+- **Observation:** Application executes the tool and returns the result.
+- **Decision:** LLM evaluates the result and either calls another tool or produces the final answer.
+
+### Important
+
+Tool 1 does **not** directly call Tool 2.
+
+The LLM is the bridge:
+
+```text
+Tool 1
+ ↓
+Result
+ ↓
+LLM
+ ↓
+Tool 2
+```
+
+## Second Tool
+
+A deterministic business tool was added:
+
+```text
+checkRefundEligibility
+```
+
+Parameters:
+
+```text
+policyName
+customerType
+purchaseDate
+```
+
+The tool determines the current date in the application and calculates eligibility.
+
+For the test policy:
+
+```text
+STANDARD   → 45 days
+ENTERPRISE → 60 days
+```
+
+Example:
+
+```text
+policyName    = Refund Policy
+customerType  = STANDARD
+purchaseDate  = 2026-08-20
+currentDate   = 2026-09-21
+```
+
+Result:
+
+```text
+eligible = true
+daysSincePurchase = 32
+refundWindowDays = 45
+```
+
+## Multi-Step Agent Flow
+
+For a refund eligibility request:
+
+```text
+User
+ ↓
+LLM
+ ↓
+searchKnowledge("refund policy")
+ ↓
+P2 RAG retrieves policy
+ ↓
+Tool result returned to LLM
+ ↓
+LLM decides eligibility check is required
+ ↓
+checkRefundEligibility(...)
+ ↓
+Eligibility result returned to LLM
+ ↓
+LLM
+ ↓
+Final AgentResponse
+```
+
+## Spring AI Tool Loop
+
+No manual `while` loop was implemented.
+
+Multiple tools are exposed:
+
+```java
+.tools(
+    knowledgeSearchTool,
+    refundEligibilityTool
+)
+```
+
+Spring AI handles the tool-calling lifecycle:
+
+```text
+LLM
+ ↓
+Tool call
+ ↓
+Tool execution
+ ↓
+Tool result
+ ↓
+LLM again
+ ↓
+Next tool OR final answer
+```
+
+## Structured Agent Response
+
+The final agent response uses `AgentResponse` instead of a simple `ChatResponse`.
+
+The response contains:
+
+```json
+{
+  "message": "You are eligible for a refund. Your purchase on 2026-08-20 is within the 45-day refund window for Standard customers.",
+  "toolsUsed": [
+    "searchKnowledge",
+    "checkRefundEligibility"
+  ],
+  "sources": [
+    {
+      "source": "Company Refund Policy: Customers can request a refund within 45 days of purchase.",
+      "fileName": "company-policy.txt",
+      "fileType": "txt",
+      "pageNumber": "",
+      "chunkIndex": "0"
+    }
+  ]
+}
+```
+
+The response therefore provides:
+
+- `message` — final agent answer
+- `toolsUsed` — tools involved in the interaction
+- `sources` — supporting knowledge sources
+
+The response is mapped using:
+
+```java
+.call()
+.entity(AgentResponse.class);
+```
+
+## Testing
+
+### Test 1 — General question
+
+```text
+"What is Java?"
+```
+
+Result:
+
+```text
+Direct LLM response
+No tool required
+```
+
+### Test 2 — Knowledge question
+
+```text
+"What is our refund policy?"
+```
+
+Result:
+
+```text
+searchKnowledge
+ ↓
+P2 RAG
+ ↓
+Final answer
+```
+
+### Test 3 — Multi-step question
+
+```text
+"I am a standard customer and purchased something on
+2026-08-20. Check whether I am eligible for a refund
+according to our refund policy."
+```
+
+Result:
+
+```text
+searchKnowledge
+ ↓
+checkRefundEligibility
+ ↓
+Final AgentResponse
+```
+
+Application logs confirmed that `searchKnowledge` completed first and `checkRefundEligibility` executed afterwards in the same agent request.
+
+## Key Learning
+
+### P2
+
+```text
+RAG → Retrieve enterprise knowledge
+```
+
+### P3
+
+```text
+LLM → Decide → Tool → Observe → Decide again → Tool → Answer
+```
+
+The major capability added across Days 4–5 is the transition from simple tool availability to **agent-driven multi-step tool execution**.
+
+## Completion
+
+- [x] Agent fundamentals understood
+- [x] Agent vs normal chatbot understood
+- [x] Existing P2 RAG reused as an agent tool
+- [x] Tool registration and execution verified
+- [x] Agent loop understood
+- [x] Action → Observation → Decision understood
+- [x] Second tool implemented
+- [x] Multiple tools exposed to the agent
+- [x] Multi-tool chaining verified
+- [x] Structured `AgentResponse` implemented
+- [x] Sources included in the response
+- [x] End-to-end testing completed
+
+**P3 Day 4 + Day 5 — COMPLETE**

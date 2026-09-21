@@ -1,6 +1,7 @@
 package com.spring_ai.ai_copilot.client;
 
 import com.spring_ai.ai_copilot.agent.tools.KnowledgeSearchTool;
+import com.spring_ai.ai_copilot.dto.AgentResponse;
 import com.spring_ai.ai_copilot.dto.ChatRequest;
 import com.spring_ai.ai_copilot.dto.ChatResponse;
 import com.spring_ai.ai_copilot.dto.FeedbackAnalysis;
@@ -206,13 +207,13 @@ public class AiProviderClient {
     @Bulkhead(name = "aiProvider")
     @RateLimiter(name= "aiProvider")
     @CircuitBreaker(name="aiProvider")
-    public ChatResponse getChatResponseWithToolCall(String systemPrompt,String prompt, String conversationId, Object ... tools) {
+    public AgentResponse getChatResponseWithToolCall(String systemPrompt, String prompt, String conversationId, Object ... tools) {
 
         String operation = "chat.response.tool.call";
         long startedAt = System.nanoTime();
         log.info("ai.provider.request.started operation={} provider={} model={} conversationId={}", operation, PROVIDER, MODEL, conversationId);
         try {
-            String response = client.prompt()
+            AgentResponse response = client.prompt()
                     .system(systemPrompt)
                     .user(prompt)
                     .tools(tools)
@@ -220,12 +221,12 @@ public class AiProviderClient {
                     .advisors(advisorSpec ->
                             advisorSpec.param(ChatMemory.CONVERSATION_ID, conversationId))
                     .call()
-                    .content();
+                    .entity(AgentResponse.class);
 
             long latencyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
             recordAiMetrics(operation, "success", null, latencyMs);
             log.info("ai.provider.request.completed operation={} provider={} model={} latencyMs={} status=success", operation, PROVIDER, MODEL, latencyMs);
-            return new ChatResponse(response);
+            return response;
         } catch (Exception e) {
             long latencyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
             String errorCode = "AI_PROVIDER_ERROR";

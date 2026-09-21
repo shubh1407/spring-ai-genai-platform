@@ -2,6 +2,7 @@ package com.spring_ai.ai_copilot.agent.tools;
 
 import com.spring_ai.ai_copilot.client.AiProviderClient;
 import com.spring_ai.ai_copilot.dto.AgentChatRequest;
+import com.spring_ai.ai_copilot.dto.AgentResponse;
 import com.spring_ai.ai_copilot.dto.ChatRequest;
 import com.spring_ai.ai_copilot.dto.ChatResponse;
 import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
@@ -41,7 +42,7 @@ public class AgentService {
         this.client = client;
     }
 
-    public ChatResponse getChatResponse(AgentChatRequest chatRequest) {
+    public AgentResponse getChatResponse(AgentChatRequest chatRequest) {
         log.info("service.agent.response.started operation=chat.response");
         try {
             PromptTemplate promptTemplate = PromptTemplate.builder()
@@ -55,7 +56,7 @@ public class AgentService {
                     .build();
 
             String prompt = promptTemplate.render(Map.of("message", chatRequest.message()));
-            ChatResponse response = client.getChatResponseWithToolCall(SYSTEM_PROMPT,prompt, chatRequest.conversationId(),knowledgeSearchTool);
+            AgentResponse response = client.getChatResponseWithToolCall(SYSTEM_PROMPT,prompt, chatRequest.conversationId(),knowledgeSearchTool);
             log.info("service.agent.response.completed operation=chat.response status=success");
             return response;
         } catch (Exception e) {
