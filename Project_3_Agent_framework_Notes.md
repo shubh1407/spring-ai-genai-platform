@@ -1142,169 +1142,152 @@ The exact taxonomy can evolve when action tools are introduced.
 
 ## Day 3 Status: COMPLETE
 
-## Day 4 — Agent Fundamentals
+# P3 Day 4–5 — Agent Fundamentals, Agent Loop & Multi-Step Execution
 
-### Goal
+## 1. Agent Fundamentals
 
-Understand the difference between a normal chatbot, a tool-enabled chatbot, and an agent.
+### What is an Agent?
 
-### Agent Concept
-
-A normal chatbot:
+A normal chatbot mainly generates an answer:
 
 ```text
-User
- ↓
-LLM
- ↓
-Answer
+User → LLM → Answer
 ```
 
-A tool-enabled interaction:
+A tool-enabled AI system can invoke application capabilities:
 
 ```text
-User
- ↓
-LLM
- ↓
-Tool
- ↓
-Tool Result
- ↓
-LLM
- ↓
-Answer
+User → LLM → Tool → Result → LLM → Answer
 ```
 
-An agent:
+An **agent** goes one step further: the LLM can decide what action is needed, observe the result, and decide what to do next.
 
 ```text
 User
  ↓
 LLM
  ↓
-Action
+Action / Tool
  ↓
 Observation
  ↓
 LLM
  ↓
-Action / Final Answer
+Next Action OR Final Answer
 ```
 
-The key difference is that the LLM can decide whether an action/tool is required.
-
-### Existing P2 Capability Reused by P3
-
-The `searchKnowledge` tool reuses the existing P2 RAG infrastructure:
-
-```text
-Agent
- ↓
-searchKnowledge
- ↓
-RagRetrievalService
- ↓
-QueryTransformer
- ↓
-MultiQueryGenerator
- ↓
-MultiQueryRetriever
- ↓
-Re-ranking
- ↓
-PGVector
- ↓
-Citations
-```
-
-P2 provides the knowledge capability; P3 adds agentic orchestration.
-
-### Tool Registration
-
-Spring AI exposes a tool to the model through the `@Tool` annotation and registers it with the `ChatClient`:
-
-```java
-.tools(knowledgeSearchTool)
-```
-
-The model decides when the tool is needed.
-
-### Day 4 Testing
-
-Verified:
-
-- General Java question → direct answer without tool execution.
-- Internal refund-policy question → `searchKnowledge` executed.
-- Mixed/internal question → tool used and unavailable information was not invented.
-
-The application logs confirmed actual tool execution.
-
----
-
-# Day 5 — Agent Loop & Multi-Step Execution
-
-## Goal
-
-Move from single-tool execution to multi-step agent execution.
-
-Single-tool flow:
-
-```text
-User
- ↓
-LLM
- ↓
-Tool
- ↓
-Tool Result
- ↓
-LLM
- ↓
-Final Answer
-```
-
-Multi-step flow:
-
-```text
-User
- ↓
-LLM
- ↓
-Tool 1
- ↓
-Tool Result
- ↓
-LLM decides next action
- ↓
-Tool 2
- ↓
-Tool Result
- ↓
-LLM
- ↓
-Final Answer
-```
-
-## Agent Loop
-
-The fundamental pattern is:
+### Core Agent Idea
 
 ```text
 Action → Observation → Decision
 ```
 
-- **Action:** LLM requests a tool call.
-- **Observation:** Application executes the tool and returns the result.
-- **Decision:** LLM evaluates the result and either calls another tool or produces the final answer.
+- **Action:** LLM requests a tool.
+- **Observation:** Tool executes and returns a result.
+- **Decision:** LLM evaluates the result and decides whether another action is required.
 
-### Important
+---
 
-Tool 1 does **not** directly call Tool 2.
+## 2. P2 RAG + P3 Agent
 
-The LLM is the bridge:
+P2 already provides the knowledge capability:
 
 ```text
+Query
+ ↓
+Query Transformation
+ ↓
+Multi Query
+ ↓
+Vector Retrieval
+ ↓
+Re-ranking
+ ↓
+Citations
+```
+
+P3 does not rebuild this.
+
+Instead:
+
+```text
+Agent
+ ↓
+searchKnowledge Tool
+ ↓
+P2 RAG
+ ↓
+Knowledge Result
+ ↓
+LLM
+```
+
+### Important distinction
+
+**P2:**
+
+> How can the system retrieve relevant enterprise knowledge?
+
+**P3:**
+
+> How can the LLM decide when and how to use that capability?
+
+So P2 provides the **capability**, while P3 adds **agentic orchestration**.
+
+---
+
+## 3. Tool as an Agent Capability
+
+The existing tool:
+
+```text
+searchKnowledge
+```
+
+is exposed using Spring AI tool support.
+
+Important APIs used:
+
+```java
+@Tool
+@ToolParam
+```
+
+and:
+
+```java
+.tools(knowledgeSearchTool)
+```
+
+The LLM decides whether the tool is required.
+
+The tool itself remains deterministic application code; the LLM decides **when to use it**, not how the underlying retrieval implementation works.
+
+---
+
+# Day 5 — Agent Loop & Multi-Step Execution
+
+## 4. Single Tool vs Multi-Step Execution
+
+Single-tool execution:
+
+```text
+LLM
+ ↓
+searchKnowledge
+ ↓
+Result
+ ↓
+LLM
+ ↓
+Answer
+```
+
+Multi-step execution:
+
+```text
+LLM
+ ↓
 Tool 1
  ↓
 Result
@@ -1312,15 +1295,68 @@ Result
 LLM
  ↓
 Tool 2
+ ↓
+Result
+ ↓
+LLM
+ ↓
+Answer
 ```
 
-## Second Tool
+The important concept is:
 
-A deterministic business tool was added:
+> Tool 1 does not directly call Tool 2. The LLM receives Tool 1's result and decides whether Tool 2 is required.
+
+The LLM acts as the bridge between tools.
+
+---
+
+## 5. Multi-Tool Chaining Example
+
+Two tools are available:
 
 ```text
+searchKnowledge
 checkRefundEligibility
 ```
+
+User request:
+
+> I am a standard customer and purchased something on 2026-08-20. Check whether I am eligible for a refund according to our refund policy.
+
+Agent flow:
+
+```text
+User
+ ↓
+LLM
+ ↓
+searchKnowledge("refund policy")
+ ↓
+P2 RAG retrieves refund policy
+ ↓
+Result returned to LLM
+ ↓
+LLM understands the applicable policy
+ ↓
+checkRefundEligibility(...)
+ ↓
+Eligibility result
+ ↓
+LLM
+ ↓
+Final answer
+```
+
+This is **multi-step agent execution**.
+
+---
+
+## 6. `checkRefundEligibility` Tool
+
+Purpose:
+
+> Perform deterministic refund eligibility calculation.
 
 Parameters:
 
@@ -1330,9 +1366,9 @@ customerType
 purchaseDate
 ```
 
-The tool determines the current date in the application and calculates eligibility.
+The tool obtains the current application date itself.
 
-For the test policy:
+Example policy used for the project:
 
 ```text
 STANDARD   → 45 days
@@ -1342,51 +1378,36 @@ ENTERPRISE → 60 days
 Example:
 
 ```text
-policyName    = Refund Policy
 customerType  = STANDARD
 purchaseDate  = 2026-08-20
 currentDate   = 2026-09-21
 ```
 
-Result:
+Calculation:
 
 ```text
-eligible = true
 daysSincePurchase = 32
-refundWindowDays = 45
+refundWindow = 45
+32 <= 45
+↓
+Eligible
 ```
 
-## Multi-Step Agent Flow
+The tool returns a structured eligibility result.
 
-For a refund eligibility request:
+### Important design principle
 
-```text
-User
- ↓
-LLM
- ↓
-searchKnowledge("refund policy")
- ↓
-P2 RAG retrieves policy
- ↓
-Tool result returned to LLM
- ↓
-LLM decides eligibility check is required
- ↓
-checkRefundEligibility(...)
- ↓
-Eligibility result returned to LLM
- ↓
-LLM
- ↓
-Final AgentResponse
-```
+The eligibility calculation is deterministic application logic.
 
-## Spring AI Tool Loop
+The LLM should decide **when to invoke the tool**, while the tool performs the actual business calculation.
 
-No manual `while` loop was implemented.
+---
 
-Multiple tools are exposed:
+## 7. Spring AI Tool-Calling Loop
+
+No custom `while` loop was required.
+
+Multiple tools are exposed to the model:
 
 ```java
 .tools(
@@ -1395,27 +1416,36 @@ Multiple tools are exposed:
 )
 ```
 
-Spring AI handles the tool-calling lifecycle:
+Spring AI manages the tool-calling lifecycle:
 
 ```text
 LLM
  ↓
-Tool call
+Tool Call
  ↓
-Tool execution
+Tool Execution
  ↓
-Tool result
+Tool Result
  ↓
-LLM again
+LLM
  ↓
-Next tool OR final answer
+Another Tool OR Final Answer
 ```
 
-## Structured Agent Response
+This is preferable to manually implementing a duplicate agent loop when the framework already provides the lifecycle.
 
-The final agent response uses `AgentResponse` instead of a simple `ChatResponse`.
+---
 
-The response contains:
+## 8. Structured Agent Response
+
+The agent response was changed from a simple message response to a structured `AgentResponse`.
+
+```java
+.call()
+.entity(AgentResponse.class);
+```
+
+Final response example:
 
 ```json
 {
@@ -1436,38 +1466,77 @@ The response contains:
 }
 ```
 
-The response therefore provides:
+The response provides:
 
-- `message` — final agent answer
-- `toolsUsed` — tools involved in the interaction
+- `message` — final answer
+- `toolsUsed` — tools involved in the agent interaction
 - `sources` — supporting knowledge sources
 
-The response is mapped using:
+---
 
-```java
-.call()
-.entity(AgentResponse.class);
+## 9. Agent vs Deterministic Workflow
+
+This distinction is important for AI system design interviews.
+
+### Deterministic workflow
+
+Application decides the sequence:
+
+```text
+searchKnowledge
+ ↓
+checkRefundEligibility
+ ↓
+return answer
 ```
 
-## Testing
+### Agentic workflow
+
+The LLM decides whether the next action is required:
+
+```text
+LLM
+ ↓
+searchKnowledge
+ ↓
+observe result
+ ↓
+LLM decides
+ ↓
+checkRefundEligibility
+ ↓
+observe result
+ ↓
+LLM
+ ↓
+answer
+```
+
+Use an agent when the next action depends on the information obtained during execution.
+
+Use a deterministic workflow when the sequence is known and predictable.
+
+---
+
+## 10. Testing
 
 ### Test 1 — General question
 
 ```text
-"What is Java?"
+What is Java?
 ```
 
 Result:
 
 ```text
-Direct LLM response
+Direct LLM answer
 No tool required
 ```
 
 ### Test 2 — Knowledge question
 
 ```text
-"What is our refund policy?"
+What is our refund policy?
 ```
 
 Result:
@@ -1480,12 +1549,11 @@ P2 RAG
 Final answer
 ```
 
-### Test 3 — Multi-step question
+### Test 3 — Multi-step request
 
 ```text
-"I am a standard customer and purchased something on
-2026-08-20. Check whether I am eligible for a refund
-according to our refund policy."
+I am a standard customer and purchased something on
+2026-08-20. Check whether I am eligible for a refund.
 ```
 
 Result:
@@ -1498,37 +1566,75 @@ checkRefundEligibility
 Final AgentResponse
 ```
 
-Application logs confirmed that `searchKnowledge` completed first and `checkRefundEligibility` executed afterwards in the same agent request.
+Application logs confirmed both tools executed sequentially in the same agent request.
 
-## Key Learning
+---
 
-### P2
+# AI / Interview Key Takeaways
+
+### 1. What makes a system agentic?
+
+The LLM can decide what action/tool to take based on the current task and observations.
+
+### 2. What is an agent loop?
 
 ```text
-RAG → Retrieve enterprise knowledge
+Action → Observation → Decision
 ```
 
-### P3
+### 3. Does Tool A directly invoke Tool B?
+
+No.
 
 ```text
-LLM → Decide → Tool → Observe → Decide again → Tool → Answer
+Tool A → Result → LLM → Tool B
 ```
 
-The major capability added across Days 4–5 is the transition from simple tool availability to **agent-driven multi-step tool execution**.
+The LLM orchestrates the interaction.
 
-## Completion
+### 4. Difference between RAG and Agent?
 
-- [x] Agent fundamentals understood
-- [x] Agent vs normal chatbot understood
-- [x] Existing P2 RAG reused as an agent tool
-- [x] Tool registration and execution verified
-- [x] Agent loop understood
-- [x] Action → Observation → Decision understood
-- [x] Second tool implemented
-- [x] Multiple tools exposed to the agent
-- [x] Multi-tool chaining verified
-- [x] Structured `AgentResponse` implemented
-- [x] Sources included in the response
-- [x] End-to-end testing completed
+**RAG** retrieves relevant knowledge.
+
+**Agent** decides which capabilities/tools to use and can perform multiple steps.
+
+### 5. Can an agent use RAG?
+
+Yes.
+
+RAG can be exposed as one of the agent's tools.
+
+### 6. Why keep business logic inside tools?
+
+The LLM should decide **what action is needed**. Deterministic business rules should remain in application code for reliability and control.
+
+### 7. Agent vs workflow?
+
+Known fixed sequence → deterministic workflow.
+
+Dynamic next-step decision → agentic workflow.
+
+### 8. Why is multi-step execution important?
+
+It allows the system to solve tasks that require multiple dependent actions instead of producing an answer after a single tool call.
+
+---
+
+## Day 4–5 Completion
+
+- [x] Agent fundamentals
+- [x] Chatbot vs tool-enabled system vs agent
+- [x] P2 RAG reused as an agent capability
+- [x] Spring AI tool registration
+- [x] Agent loop
+- [x] Action → Observation → Decision
+- [x] Multi-tool chaining
+- [x] Second deterministic tool
+- [x] Spring AI tool-calling lifecycle
+- [x] Structured AgentResponse
+- [x] Sources in agent response
+- [x] Agent vs deterministic workflow
+- [x] End-to-end testing
+- [x] Multi-step execution verified
 
 **P3 Day 4 + Day 5 — COMPLETE**
