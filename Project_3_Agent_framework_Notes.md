@@ -1638,3 +1638,402 @@ It allows the system to solve tasks that require multiple dependent actions inst
 - [x] Multi-step execution verified
 
 **P3 Day 4 + Day 5 — COMPLETE**
+
+# P3 Day 6 — Planning & Workflow
+
+## Objective
+
+Day 6 introduced **explicit planning inside an agentic workflow**.
+
+Day 5 demonstrated dynamic multi-step execution:
+
+`LLM → Tool → Result → LLM → Next Tool`
+
+Day 6 adds a planning capability without converting the agent into a deterministic workflow.
+
+> Planning guides execution, but the LLM remains responsible for deciding which tool to call, when to continue, and when re-planning is required.
+
+---
+
+## 1. Planning vs Tool Calling
+
+### Tool Calling
+
+Tool calling allows the LLM to invoke an application capability.
+
+`LLM → searchKnowledge → Result`
+
+### Planning
+
+Planning determines how a complex goal can be approached.
+
+`User Goal → Execution Plan → Agent selects tools → Results → Continue/Re-plan`
+
+Planning and execution are different responsibilities.
+
+---
+
+## 2. Agentic Planning
+
+The planning capability was implemented as an actual Spring AI tool:
+
+`createExecutionPlan`
+
+For a simple request:
+
+`User → LLM → Final Answer`
+
+For a complex request:
+
+`User → Agent → createExecutionPlan → Plan → Business Tools → Result → Final Answer`
+
+The plan is **not an execution script**. It does not directly execute `searchKnowledge` or `checkRefundEligibility`.
+
+The main agent receives the plan and remains responsible for selecting and invoking the actual tools.
+
+---
+
+## 3. Planning DTO
+
+The execution plan uses structured output:
+
+```java
+public record AgentPlan(
+    String goal,
+    List<PlanStep> steps
+) {}
+```
+
+Each step:
+
+```java
+public record PlanStep(
+    int stepNumber,
+    String action,
+    String purpose
+) {}
+```
+
+This provides a structured representation instead of relying on unstructured text.
+
+---
+
+## 4. Planning Tool
+
+The planning capability is exposed through Spring AI:
+
+```java
+@Component
+public class PlanningTool {
+
+    private final AiProviderClient aiProviderClient;
+
+    public PlanningTool(AiProviderClient aiProviderClient) {
+        this.aiProviderClient = aiProviderClient;
+    }
+
+    @Tool(
+        name = "createExecutionPlan",
+        description = """
+            Create an execution plan for a complex user request before executing
+            business actions. Use this tool when the request requires multiple
+            dependent actions, information gathering, or decision-making across
+            multiple steps.
+            The result of this tool is a plan for the agent to follow.
+            This tool does not execute business actions.
+            Do not use this tool for simple requests that can be answered directly.
+            """
+    )
+    public AgentPlan createExecutionPlan(
+        @ToolParam(
+            required = true,
+            description = "The user's goal or request that needs to be planned."
+        )
+        String goal
+    ) {
+        if (goal == null || goal.isBlank()) {
+            throw new ToolValidationException(
+                "Planning goal must not be blank"
+            );
+        }
+
+        if (goal.length() > 1000) {
+            throw new ToolValidationException(
+                "Planning goal is too long"
+            );
+        }
+
+        return aiProviderClient.createExecutionPlan(goal);
+    }
+}
+```
+
+**Design rule:** `PlanningTool` creates the plan; it does not execute the plan.
+
+---
+
+## 5. LLM Creates the Plan
+
+Plan generation uses structured output:
+
+```java
+public AgentPlan createExecutionPlan(String goal) {
+    return client.prompt()
+        .system("""
+            You are an execution planning assistant.
+            Create a concise execution plan for the user's goal.
+            Break complex tasks into meaningful steps.
+            Do not execute tools.
+            Do not invent facts.
+            Keep the plan concise.
+            Return the result as the requested structured output.
+            """)
+        .user(goal)
+        .call()
+        .entity(AgentPlan.class);
+}
+```
+
+The LLM creates the plan; the main agent remains responsible for execution.
+
+---
+
+## 6. Complete Agent Flow
+
+```text
+User Goal
+    ↓
+Agent LLM
+    ↓
+Does this require planning?
+    ↓
+createExecutionPlan
+    ↓
+AgentPlan
+    ↓
+Agent decides next action
+    ↓
+searchKnowledge
+    ↓
+Tool Result
+    ↓
+Agent evaluates result
+    ↓
+checkRefundEligibility
+    ↓
+Tool Result
+    ↓
+Validation
+    ↓
+Final Answer
+```
+
+There is no hardcoded sequence such as:
+
+```text
+1. call planner
+2. call searchKnowledge
+3. call refundEligibility
+```
+
+The LLM remains in the decision loop.
+
+---
+
+## 7. Multi-Step Agent Traversal
+
+Tool A does not directly call Tool B.
+
+The model receives Tool A's result and decides whether Tool B is required:
+
+`Tool A → LLM → Tool B`
+
+For the refund scenario:
+
+```text
+createExecutionPlan
+        ↓
+      LLM
+        ↓
+searchKnowledge
+        ↓
+      LLM
+        ↓
+checkRefundEligibility
+        ↓
+      LLM
+        ↓
+Final Answer
+```
+
+The LLM acts as the decision-making bridge between tool executions.
+
+---
+
+## 8. Re-Planning
+
+A plan is not permanent.
+
+If the agent determines that the current result is insufficient, unexpected, or does not satisfy the user's goal, it can request a new plan.
+
+```text
+Initial Plan
+    ↓
+Tool Execution
+    ↓
+Result
+    ↓
+Result sufficient?
+   ├── Yes → Continue / Complete
+   └── No  → createExecutionPlan again
+                    ↓
+                Revised Plan
+                    ↓
+                Tool Execution
+```
+
+Re-planning is **agent-driven**, not a hardcoded application workflow.
+
+---
+
+## 9. Deterministic Workflow vs Agentic Planning
+
+### Deterministic Workflow
+
+The application controls the sequence:
+
+`A → B → C → D`
+
+The execution path is known beforehand.
+
+### Agentic Planning
+
+The model dynamically decides the traversal:
+
+`Goal → Plan → Tool → Result → LLM Decision → Next Tool / Re-plan / Finish`
+
+Agentic planning is useful when the exact execution path cannot always be known in advance.
+
+---
+
+## 10. Spring AI Tool Calling
+
+Tools are provided to the model:
+
+```java
+.tools(
+    planningTool,
+    knowledgeSearchTool,
+    refundEligibilityTool
+)
+```
+
+Conceptually:
+
+```text
+LLM requests tool call
+        ↓
+Spring AI Tool Calling Manager
+        ↓
+Tool execution
+        ↓
+Tool result returned to model
+        ↓
+LLM decides next action
+```
+
+The basic agent loop does not require a manually implemented `while` loop.
+
+---
+
+## 11. Day 6 Test
+
+A complex refund request was used:
+
+```text
+I want to determine whether I am eligible for a refund.
+My purchase date was 2026-08-20 and I am a STANDARD customer.
+First determine the applicable company refund policy from the
+internal knowledge base, then check my refund eligibility based
+on that policy and my purchase date.
+If the available information is insufficient at any point,
+determine what additional information or action is required.
+```
+
+The demonstrated execution path:
+
+```text
+createExecutionPlan
+        ↓
+searchKnowledge
+        ↓
+checkRefundEligibility
+        ↓
+Final Answer
+```
+
+Re-planning was also tested as part of the Day 6 objective.
+
+---
+
+## 12. Important Design Decisions
+
+- **Plan is guidance, not executable instructions.**
+- **LLM remains responsible for traversal.**
+- `PlanningTool` does not directly call `KnowledgeSearchTool` or `RefundEligibilityTool`.
+- Planning is optional for simple requests.
+- Re-planning is possible when new information changes the execution context.
+- Do not replace the agent with a hardcoded `for` loop over plan steps.
+
+---
+
+## 13. AI / Interview Key Takeaways
+
+### What is agentic planning?
+
+Agentic planning is where an AI agent determines an approach for achieving a goal and dynamically selects actions/tools based on the current state and observed results.
+
+### Is planning the same as workflow orchestration?
+
+No.
+
+A deterministic workflow has an application-controlled sequence. An agentic workflow allows the model to dynamically select the next action.
+
+### Why should a plan not directly execute tools?
+
+Separating planning from execution provides better control, validation, observability, and flexibility.
+
+### How does re-planning work?
+
+The agent observes an action result. If the result is insufficient or changes the execution context, it can generate a revised plan and continue.
+
+### Does Tool A directly invoke Tool B?
+
+Normally, no. The model receives Tool A's result and decides whether Tool B should be called.
+
+### Where does Spring AI fit?
+
+Spring AI provides the tool-calling infrastructure connecting model-generated tool calls with application-side tool implementations and returning tool results to the model.
+
+---
+
+## 14. Key Takeaways
+
+- Planning is a capability inside an agent, not necessarily a separate deterministic workflow.
+- `createExecutionPlan` was implemented as a Spring AI tool.
+- The LLM generates a structured `AgentPlan`.
+- The plan guides the agent but does not execute business operations.
+- Tool execution remains agentic.
+- Tool results are returned to the LLM before the next decision.
+- The agent can perform multi-step execution.
+- The agent can re-plan when the current execution state is insufficient.
+- Simple requests can bypass planning.
+- Planning, execution, validation, and re-planning are separate concepts.
+
+## Day 6 Status
+
+**Completed**
+
+P3 progression:
+
+`Tool Calling → Tool Engineering → Agent Fundamentals → Multi-Step Execution → Planning → Re-Planning`

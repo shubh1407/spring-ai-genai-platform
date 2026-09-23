@@ -1,8 +1,7 @@
 package com.spring_ai.ai_copilot.client;
 
-import com.spring_ai.ai_copilot.agent.tools.KnowledgeSearchTool;
+import com.spring_ai.ai_copilot.dto.AgentPlan;
 import com.spring_ai.ai_copilot.dto.AgentResponse;
-import com.spring_ai.ai_copilot.dto.ChatRequest;
 import com.spring_ai.ai_copilot.dto.ChatResponse;
 import com.spring_ai.ai_copilot.dto.FeedbackAnalysis;
 import io.github.resilience4j.bulkhead.annotation.Bulkhead;
@@ -237,6 +236,26 @@ public class AiProviderClient {
         }
 
 
+    }
+
+    @Bulkhead(name = "aiProvider")
+    @RateLimiter(name= "aiProvider")
+    @CircuitBreaker(name="aiProvider")
+    public AgentPlan createPlan(String goal) {
+
+        return client.prompt()
+                .system("""
+                You are an execution planning assistant.
+
+                Create a concise plan for the user's goal.
+                Break complex tasks into meaningful steps.
+                Do not execute any tools.
+                Do not invent information.
+                Return only the structured plan.
+            """)
+                .user(goal)
+                .call()
+                .entity(AgentPlan.class);
     }
 
     void recordAiMetrics(String operation, String status, String errorCode, long latencyMs) {
