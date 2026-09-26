@@ -29,11 +29,11 @@ public class AgentController {
     }
 
     @PostMapping("/agent-ask")
-    public ResponseEntity<AgentResponse> agentAsk(@RequestBody AgentChatRequest chatRequest) {
+    public ResponseEntity<String> agentAsk(@RequestBody AgentChatRequest chatRequest) {
         tenantContext.setTenantId(chatRequest.tenantId());
         log.info("controller.agent.request.started operation=agent.chat.request");
         try {
-            AgentResponse response = agentService.getChatResponse(chatRequest);
+            String response = agentService.getChatResponse(chatRequest);
             log.info("controller.agent.request.completed operation=agent.chat.request status=success");
             return ResponseEntity.ok(response);
         } catch (Exception e) {

@@ -11,8 +11,10 @@ import com.spring_ai.ai_copilot.service.ChatService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.prompt.PromptTemplate;
+import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -23,6 +25,8 @@ public class AgentService {
     private final KnowledgeSearchTool knowledgeSearchTool;
 
     private final PlannerTool plannerTool;
+
+    private final SyncMcpToolCallbackProvider mcpTools;
 
     private static final String SYSTEM_PROMPT = """
         You are an enterprise AI agent responsible for solving the user's request
@@ -207,14 +211,15 @@ public class AgentService {
     private final AiExceptionTranslator aiExceptionTranslator;
     private final AiProviderClient client;
 
-    public AgentService(KnowledgeSearchTool knowledgeSearchTool, PlannerTool plannerTool, AiExceptionTranslator aiExceptionTranslator, AiProviderClient client) {
+    public AgentService(KnowledgeSearchTool knowledgeSearchTool, PlannerTool plannerTool, SyncMcpToolCallbackProvider mcpTools, AiExceptionTranslator aiExceptionTranslator, AiProviderClient client) {
         this.knowledgeSearchTool = knowledgeSearchTool;
         this.plannerTool = plannerTool;
+        this.mcpTools = mcpTools;
         this.aiExceptionTranslator = aiExceptionTranslator;
         this.client = client;
     }
 
-    public AgentResponse getChatResponse(AgentChatRequest chatRequest) {
+    public String getChatResponse(AgentChatRequest chatRequest) {
         log.info("service.agent.response.started operation=chat.response");
         try {
             PromptTemplate promptTemplate = PromptTemplate.builder()
@@ -228,7 +233,7 @@ public class AgentService {
                     .build();
 
             String prompt = promptTemplate.render(Map.of("message", chatRequest.message()));
-            AgentResponse response = client.getChatResponseWithToolCall(SYSTEM_PROMPT,prompt, chatRequest.conversationId(),knowledgeSearchTool,plannerTool);
+            String response = client.getChatResponseWithToolCall(SYSTEM_PROMPT,prompt, chatRequest.conversationId(),knowledgeSearchTool,plannerTool,mcpTools);
             log.info("service.agent.response.completed operation=chat.response status=success");
             return response;
         } catch (Exception e) {

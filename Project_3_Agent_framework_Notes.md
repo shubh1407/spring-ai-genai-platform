@@ -2037,3 +2037,2490 @@ Spring AI provides the tool-calling infrastructure connecting model-generated to
 P3 progression:
 
 `Tool Calling → Tool Engineering → Agent Fundamentals → Multi-Step Execution → Planning → Re-Planning`
+
+# P3 Day 7 — Agent Memory
+
+## Goal
+
+Understand and validate conversation memory in the AI Agent.
+
+Day 7 did not introduce a new memory implementation because the Agent already had Spring AI chat memory configured. The focus was understanding how it works, validating conversation continuity, and understanding production considerations.
+
+---
+
+## 1. Why Does an Agent Need Memory?
+
+Without memory, every request is treated independently.
+
+```text
+Request 1
+User: My purchase date is 2026-08-20.
+
+Request 2
+User: What was my purchase date?
+
+Without memory:
+Agent does not know.
+```
+
+With conversation memory:
+
+```text
+Request 1
+User: My purchase date is 2026-08-20.
+        ↓
+Memory
+
+Request 2
+User: What was my purchase date?
+        ↓
+Memory
+        ↓
+Agent can answer
+```
+
+Memory gives the Agent continuity across turns.
+
+---
+
+## 2. Memory vs RAG
+
+These two concepts are different.
+
+### Memory
+
+Stores/retrieves conversation context.
+
+```text
+User ↔ Agent conversation
+```
+
+### RAG
+
+Retrieves external or enterprise knowledge.
+
+```text
+Question
+   ↓
+Retriever
+   ↓
+Vector Store
+   ↓
+Company documents
+   ↓
+LLM
+```
+
+Therefore:
+
+```text
+Memory = what happened in the conversation
+
+RAG = information retrieved from knowledge sources
+```
+
+An enterprise Agent can use both.
+
+```text
+User
+ ↓
+Agent
+ ├── Memory
+ └── RAG
+```
+
+---
+
+## 3. Existing Spring AI Memory Configuration
+
+The Agent already uses:
+
+```java
+.advisors(messageChatMemoryAdvisor)
+.advisors(advisorSpec ->
+        advisorSpec.param(
+                ChatMemory.CONVERSATION_ID,
+                conversationId
+        )
+)
+```
+
+The important piece is:
+
+```java
+ChatMemory.CONVERSATION_ID
+```
+
+The conversation ID identifies which conversation history should be used.
+
+---
+
+## 4. Conversation ID
+
+Example:
+
+```text
+conversationId = agent-memory-1
+```
+
+Request 1:
+
+```text
+My purchase date is 2026-08-20.
+```
+
+Request 2:
+
+```text
+What was my purchase date?
+```
+
+Because both requests use:
+
+```text
+agent-memory-1
+```
+
+they belong to the same logical conversation.
+
+Different ID:
+
+```text
+agent-memory-2
+```
+
+means a different conversation.
+
+---
+
+## 5. Conversation Isolation
+
+Conversation isolation is important in enterprise applications.
+
+Example:
+
+```text
+Conversation A
+conversationId = A
+
+User:
+My name is Rahul.
+```
+
+Another conversation:
+
+```text
+Conversation B
+conversationId = B
+
+User:
+What is my name?
+```
+
+Conversation B should not receive information from conversation A.
+
+This was tested during Day 7.
+
+The isolation test showed that the second conversation did not have access to the first conversation's information.
+
+---
+
+## 6. Memory + Agent
+
+Memory is especially useful when the Agent performs multiple steps over multiple turns.
+
+Example:
+
+```text
+Turn 1
+User:
+I am a STANDARD customer.
+
+        ↓
+
+Memory
+
+        ↓
+
+Turn 2
+User:
+Check whether my purchase is eligible.
+
+        ↓
+
+Agent reads conversation context
+        ↓
+checkRefundEligibility
+```
+
+The Agent can combine:
+
+```text
+Memory
++
+Planning
++
+Tools
++
+RAG
+```
+
+---
+
+## 7. Short-Term Memory
+
+Short-term memory means current conversation context.
+
+Example:
+
+```text
+User:
+My order ID is ORD-123.
+
+Later:
+What is my order ID?
+```
+
+The answer can come from conversation memory.
+
+This is the type of memory used in the current P3 implementation.
+
+---
+
+## 8. Long-Term Memory
+
+Long-term memory stores persistent user information beyond a single conversation.
+
+Examples:
+
+```text
+User preferences
+User profile facts
+Frequently used settings
+Persistent business preferences
+```
+
+Example:
+
+```text
+User prefers concise responses.
+```
+
+Long-term memory was discussed conceptually but was **not implemented in Day 7**.
+
+---
+
+## 9. Memory Is Not Agent State
+
+These concepts should not be mixed.
+
+### Memory
+
+Answers:
+
+> What happened in previous conversation turns?
+
+### Agent state
+
+Answers:
+
+> What is the current status of this execution?
+
+Example:
+
+```text
+Goal:
+Check refund eligibility
+
+State:
+Policy retrieved
+Eligibility check pending
+```
+
+Memory and state can work together but serve different purposes.
+
+---
+
+## 10. Production Memory Considerations
+
+A production Agent must consider:
+
+### Context growth
+
+Conversation history can become very large.
+
+```text
+More history
+    ↓
+More tokens
+    ↓
+Higher cost + latency
+```
+
+### Context window
+
+The model cannot process unlimited history.
+
+### Persistence
+
+For multiple application instances, memory may need shared persistence.
+
+Possible architecture:
+
+```text
+Agent instances
+      ↓
+Redis / Database
+      ↓
+Conversation memory
+```
+
+### Security
+
+Memory may contain sensitive information.
+
+Consider:
+
+- Access control
+- Encryption
+- Tenant isolation
+- Retention
+- Deletion
+- PII handling
+
+### Tenant isolation
+
+Conversation IDs alone should not be treated as a complete security boundary.
+
+Production systems should associate conversations with an authenticated tenant/user identity.
+
+---
+
+## 11. Tests Performed
+
+### Test 1 — Basic conversation memory
+
+Same conversation ID was used across multiple turns.
+
+Result:
+
+```text
+Previous conversation information was available.
+```
+
+### Test 2 — Agent memory
+
+The Agent retained context while performing tool-based execution.
+
+### Test 3 — Conversation isolation
+
+Different conversation ID was used.
+
+Result:
+
+```text
+Previous conversation context was not available.
+```
+
+---
+
+## 12. Code Change Status
+
+### New code added?
+
+**No.**
+
+This is important.
+
+Day 7 was not skipped.
+
+The required memory infrastructure already existed from the earlier Agent implementation.
+
+Day 7 validated and documented:
+
+```text
+ChatMemory
+MessageChatMemoryAdvisor
+conversationId
+conversation isolation
+Agent + memory
+```
+
+Adding another memory class only for the sake of a code commit would have been artificial.
+
+---
+
+## 13. Day 7 Architecture
+
+```text
+                 User
+                  |
+                  ↓
+              AgentService
+                  |
+                  ↓
+              AiProvider
+                  |
+          ┌───────┴────────┐
+          ↓                ↓
+       Memory             Tools
+          ↓                ↓
+ Conversation         RAG / Refund /
+   History              Planner
+```
+
+---
+
+## 14. Interview Questions
+
+### What is Agent memory?
+
+A mechanism that preserves relevant conversation context across interactions.
+
+### How do you identify a conversation?
+
+Using a conversation ID.
+
+### Memory vs RAG?
+
+Memory stores/retrieves conversation context; RAG retrieves external knowledge.
+
+### Short-term vs long-term memory?
+
+Short-term is conversation-level context; long-term persists user/business facts beyond a conversation.
+
+### Why can memory become expensive?
+
+More conversation history means more input tokens, latency and cost.
+
+### Is conversationId a security boundary?
+
+No. Production systems should bind conversation ownership to authenticated identity and tenant information.
+
+---
+
+## Day 7 Summary
+
+```text
+Memory
+   ↓
+Conversation ID
+   ↓
+ChatMemory
+   ↓
+Agent continuity
+```
+
+**Status: COMPLETE**
+
+# P3 Day 8 — Advanced Agent Execution
+
+## Goal
+
+Understand how a production Agent executes complex tasks, maintains bounded autonomy, handles failures, retries/re-plans, and decides when to stop.
+
+Day 8 was deliberately a **conceptual/design day**.
+
+No artificial `AgentExecutionState` implementation was added because Spring AI already manages the core tool-calling loop.
+
+---
+
+## 1. Why Advanced Agent Execution Matters
+
+A simple tool call looks like:
+
+```text
+User
+ ↓
+LLM
+ ↓
+Tool
+ ↓
+Result
+ ↓
+Answer
+```
+
+A real Agent can require several decisions:
+
+```text
+User
+ ↓
+Understand goal
+ ↓
+Decide whether tools are required
+ ↓
+Select tool
+ ↓
+Observe result
+ ↓
+Decide next action
+ ↓
+Another tool?
+ ↓
+Validate result
+ ↓
+Complete
+```
+
+The important concept is that the Agent can make decisions between tool executions.
+
+---
+
+## 2. Agent Loop
+
+Conceptually:
+
+```text
+        ┌───────────────┐
+        │     Goal      │
+        └───────┬───────┘
+                ↓
+             Decide
+                ↓
+          Execute Tool
+                ↓
+          Observe Result
+                ↓
+             Validate
+                ↓
+        ┌───────┴────────┐
+        ↓                ↓
+    Continue           Complete
+        |
+        ↓
+      Decide
+```
+
+The Agent loop is not necessarily a fixed:
+
+```text
+A → B → C
+```
+
+sequence.
+
+The next action can depend on the result of the previous action.
+
+---
+
+## 3. Agent State vs Memory
+
+This was one of the main concepts of Day 8.
+
+### Memory
+
+Memory represents conversation context.
+
+```text
+What did the user and Agent discuss?
+```
+
+### Agent State
+
+State represents the current execution status.
+
+```text
+What has happened during this execution?
+What remains?
+What is the current objective?
+```
+
+Example:
+
+```text
+Goal:
+Determine refund eligibility
+
+Current state:
+Policy retrieved
+Customer type known
+Purchase date known
+Eligibility check pending
+```
+
+Therefore:
+
+```text
+Memory ≠ Agent State
+```
+
+They can work together.
+
+---
+
+## 4. Why We Did Not Add AgentExecutionState
+
+An explicit state object was considered during Day 8.
+
+However, creating a state class only to demonstrate the concept would have duplicated functionality already handled by the Agent/tool-calling infrastructure.
+
+The important learning objective was to understand:
+
+```text
+State
++
+Memory
++
+Tool results
++
+Planning
++
+Stop conditions
+```
+
+rather than adding unnecessary framework code.
+
+Therefore:
+
+**No new code was added on Day 8.**
+
+---
+
+## 5. Bounded Autonomy
+
+An enterprise Agent should not have unlimited autonomy.
+
+The Agent should operate inside defined boundaries.
+
+Important controls include:
+
+```text
+Allowed tools
+Maximum execution time
+Maximum tool calls
+Retry limits
+Input validation
+Output validation
+Security policies
+Stop conditions
+```
+
+Conceptually:
+
+```text
+Agent
+ ↓
+Decision
+ ↓
+Allowed capability?
+ ├── No → Stop / reject
+ └── Yes
+       ↓
+    Execute
+       ↓
+    Validate
+```
+
+---
+
+## 6. Stop Conditions
+
+An Agent needs a clear definition of when the task is complete.
+
+Examples:
+
+```text
+Required information collected
+Required business operation completed
+Final answer generated
+Maximum execution limit reached
+Security policy violated
+Tool repeatedly failing
+```
+
+Without stop conditions, autonomous systems can become unpredictable or expensive.
+
+---
+
+## 7. Retry vs Re-plan
+
+These are different recovery mechanisms.
+
+### Retry
+
+Use when the same operation may succeed again.
+
+```text
+Tool call
+   ↓
+Temporary failure
+   ↓
+Retry same operation
+```
+
+Example:
+
+```text
+Temporary network timeout
+```
+
+### Re-plan
+
+Use when the current approach is no longer sufficient.
+
+```text
+Tool result
+   ↓
+Result insufficient
+   ↓
+Reconsider approach
+   ↓
+New plan
+   ↓
+Continue
+```
+
+Example:
+
+```text
+Search result does not contain required information.
+```
+
+The Agent may need another strategy.
+
+---
+
+## 8. Deterministic Workflow
+
+A deterministic workflow has a predefined sequence.
+
+```text
+A
+ ↓
+B
+ ↓
+C
+```
+
+The application controls the sequence.
+
+Example:
+
+```text
+Validate input
+ ↓
+Call service A
+ ↓
+Call service B
+ ↓
+Persist result
+```
+
+---
+
+## 9. Agentic Workflow
+
+An Agentic workflow allows the model to decide the next action.
+
+```text
+Goal
+ ↓
+LLM
+ ↓
+Tool A
+ ↓
+Result
+ ↓
+LLM
+ ↓
+Tool B
+ ↓
+Result
+ ↓
+LLM
+ ↓
+Final answer
+```
+
+The sequence can change based on results.
+
+---
+
+## 10. Hybrid Workflow
+
+Production systems often combine both.
+
+Example:
+
+```text
+Deterministic business rules
+          +
+Agentic decision making
+```
+
+Example:
+
+```text
+Application:
+Only STANDARD and ENTERPRISE customers are allowed.
+
+Agent:
+Decides which information must be retrieved.
+
+Application:
+Validates the final business operation.
+```
+
+This gives better control than giving the LLM complete freedom.
+
+---
+
+## 11. Tool Calling Loop in Spring AI
+
+Spring AI already manages the fundamental loop.
+
+Conceptually:
+
+```text
+LLM
+ ↓
+Tool Call
+ ↓
+ToolCallingManager
+ ↓
+Tool Execution
+ ↓
+Tool Result
+ ↓
+LLM
+ ↓
+Another Tool?
+ ├── Yes → execute again
+ └── No → final response
+```
+
+Therefore the application should not unnecessarily implement:
+
+```java
+while (toolCall) {
+    ...
+}
+```
+
+The framework already handles the core mechanism.
+
+---
+
+## 12. Multi-Step Agent Execution
+
+P3 already demonstrated multi-step execution before Day 8.
+
+Example:
+
+```text
+User
+ ↓
+Agent
+ ↓
+createExecutionPlan
+ ↓
+searchKnowledge
+ ↓
+checkRefundEligibility
+ ↓
+Final response
+```
+
+The important learning from Day 8 is understanding what happens conceptually around those calls:
+
+```text
+Decide
+ ↓
+Execute
+ ↓
+Observe
+ ↓
+Validate
+ ↓
+Continue / Re-plan / Stop
+```
+
+---
+
+## 13. Planning vs Execution
+
+Planning creates guidance.
+
+Execution performs actions.
+
+```text
+Planner
+   ↓
+Plan
+   ↓
+Agent
+   ↓
+Actual tools
+```
+
+The plan should not be treated as a rigid program.
+
+The Agent must consider current results before deciding the next action.
+
+---
+
+## 14. Agent Failure Scenarios
+
+A production Agent can encounter:
+
+### Tool failure
+
+```text
+Tool
+ ↓
+Exception
+```
+
+Possible response:
+
+```text
+Retry
+Fallback
+Re-plan
+Fail safely
+```
+
+### Invalid tool input
+
+```text
+LLM
+ ↓
+Invalid parameters
+ ↓
+Validation failure
+```
+
+The tool contract should reject invalid input.
+
+### Insufficient result
+
+```text
+Tool result
+ ↓
+Not enough information
+ ↓
+Re-plan / another tool
+```
+
+### Maximum execution boundary
+
+```text
+Too many steps
+ ↓
+Stop safely
+```
+
+---
+
+## 15. Security Boundary
+
+Agent autonomy must not bypass application security.
+
+The LLM should not be trusted to enforce authorization.
+
+Correct architecture:
+
+```text
+User
+ ↓
+Authenticated application
+ ↓
+Authorization
+ ↓
+Agent
+ ↓
+Allowed tools
+ ↓
+Business operation
+```
+
+The tool/application must enforce sensitive business rules.
+
+---
+
+## 16. Observability
+
+Agent execution should be observable.
+
+Useful information:
+
+```text
+conversationId
+request ID
+tool name
+tool duration
+tool success/failure
+number of tool calls
+LLM latency
+token usage
+final outcome
+```
+
+Important distinction:
+
+A field such as LLM-generated `toolsUsed` is useful for response formatting but should not be treated as authoritative execution telemetry.
+
+Actual tool execution should be measured from the application's tool execution layer/logs/metrics.
+
+---
+
+## 17. Why Day 8 Was Important Even Without Code
+
+Day 8 prevents a common mistake:
+
+> Adding code just because the topic is called "advanced agent execution."
+
+The objective was to understand the execution model before adding production controls.
+
+The concepts established here are later useful for:
+
+```text
+P4 Multi-Agent
+P4 Enterprise Automation
+P4 Human-in-the-loop
+P4 Guardrails
+P5 Evaluation
+P5 Observability
+P5 Cost / latency control
+```
+
+---
+
+## 18. Day 8 Architecture
+
+```text
+                  User Goal
+                     |
+                     ↓
+                  Agent
+                     |
+                  Decide
+                     |
+              ┌──────┴──────┐
+              ↓             ↓
+           Tool          Direct Answer
+              |
+              ↓
+           Result
+              |
+           Validate
+              |
+       ┌──────┼───────┐
+       ↓      ↓       ↓
+   Continue Re-plan Complete
+```
+
+---
+
+## 19. Interview Questions
+
+### What is agent state?
+
+The current execution context/status of an Agent task.
+
+### How is it different from memory?
+
+Memory represents conversation history/context; state represents current execution progress.
+
+### Why should Agent autonomy be bounded?
+
+To control cost, latency, security risk and unpredictable behavior.
+
+### Retry vs re-plan?
+
+Retry repeats a failed operation; re-plan changes the execution strategy.
+
+### Deterministic vs agentic workflow?
+
+Deterministic workflows have predefined steps; agentic workflows allow the LLM to choose the next action.
+
+### What is a hybrid workflow?
+
+A combination of deterministic application-controlled logic and agentic decision making.
+
+### Should we manually implement the tool loop?
+
+Not for the core Spring AI tool-calling mechanism. Spring AI already manages it.
+
+---
+
+## Day 8 Summary
+
+The key model is:
+
+```text
+Goal
+ ↓
+Decide
+ ↓
+Execute
+ ↓
+Observe
+ ↓
+Validate
+ ↓
+Continue / Re-plan / Stop
+```
+
+Production Agent design is not just about giving an LLM tools.
+
+It is about controlling:
+
+```text
+Autonomy
+State
+Memory
+Tools
+Failures
+Retries
+Re-planning
+Security
+Observability
+Stop conditions
+```
+
+**Status: COMPLETE — conceptual/design day**
+
+# P3 Day 9 & Day 10 — MCP (Model Context Protocol)
+
+## Overview
+
+P3 Day 9 and Day 10 introduced MCP and built the first standalone MCP Server.
+
+The goal was to understand how an AI application can connect to external capabilities through a standardized protocol, and then implement a basic MCP Server with a tool.
+
+---
+
+# Day 9 — MCP Fundamentals
+
+## Objective
+
+Understand:
+
+- What MCP is
+- Why MCP exists
+- MCP Host / Client / Server
+- MCP Tools
+- MCP Resources
+- MCP Prompts
+- MCP vs normal tool calling
+- MCP vs REST APIs
+- Capability discovery
+- Where MCP fits into OmniAI
+
+## 1. What is MCP?
+
+MCP stands for **Model Context Protocol**.
+
+MCP provides a standardized way for AI applications to discover and interact with external capabilities such as:
+
+- Tools
+- Resources
+- Prompts
+
+Basic architecture:
+
+```text
+AI Application
+      |
+  MCP Client
+      |
+      | MCP
+      v
+  MCP Server
+      |
+      +---- Tools
+      +---- Resources
+      +---- Prompts
+```
+
+## 2. MCP Host
+
+The MCP Host is the AI application that wants to use MCP capabilities.
+
+In OmniAI:
+
+```text
+OmniAI / AI Copilot
+        |
+        +---- Agent
+        +---- RAG
+        +---- Native Tools
+        +---- MCP Client
+```
+
+The host contains or controls the MCP Client.
+
+## 3. MCP Client
+
+The MCP Client communicates with an MCP Server.
+
+```text
+MCP Host
+   |
+MCP Client
+   |
+MCP Server
+```
+
+The client can discover available capabilities and request their execution/use.
+
+## 4. MCP Server
+
+An MCP Server exposes capabilities to MCP Clients.
+
+```text
+MCP Server
+|
++-- Tools
++-- Resources
++-- Prompts
+```
+
+The MCP Server is not an agent.
+
+It does not:
+
+- reason about the user's request
+- create an execution plan
+- decide which capability should be used
+- run an autonomous agent loop
+
+Therefore:
+
+> MCP Server = capability provider
+
+> Agent = decision maker
+
+## 5. MCP Tools
+
+A Tool represents an executable capability.
+
+Examples:
+
+```text
+getCustomer()
+createTicket()
+searchPolicy()
+```
+
+Conceptually:
+
+```text
+Agent
+  |
+MCP Client
+  |
+MCP Server
+  |
+Tool
+  |
+Result
+```
+
+Tools are used when an action or computation needs to be performed.
+
+## 6. MCP Resources
+
+A Resource represents information or context exposed through MCP.
+
+Examples:
+
+```text
+company://policies/refund
+company://docs/security
+company://products
+```
+
+Simple distinction:
+
+```text
+Tool
+→ perform an action / execute something
+
+Resource
+→ provide information or context
+```
+
+Resources were discussed conceptually in Day 9 and are implemented later.
+
+## 7. MCP Prompts
+
+Prompts are reusable prompt templates exposed by an MCP Server.
+
+Examples:
+
+```text
+summarizeIncident
+analyzeCustomerIssue
+createReleaseSummary
+```
+
+Simple distinction:
+
+```text
+Tool
+→ Action
+
+Resource
+→ Information / Context
+
+Prompt
+→ Reusable prompt template
+```
+
+Prompts were discussed conceptually in Day 9 and are implemented later.
+
+## 8. MCP vs Normal Spring AI Tool Calling
+
+Existing OmniAI tools use application-local Spring AI tools:
+
+```text
+Spring AI Agent
+      |
+      v
+Java @Tool
+      |
+Business logic
+```
+
+MCP introduces a protocol boundary:
+
+```text
+AI Application
+      |
+MCP Client
+      |
+MCP Protocol
+      |
+MCP Server
+      |
+Tool
+      |
+Business logic
+```
+
+A local Spring AI Tool is directly part of the application.
+
+An MCP capability is exposed through an MCP Server and can potentially be consumed by different MCP-compatible AI applications.
+
+## 9. MCP vs REST
+
+MCP is not a replacement for REST.
+
+REST:
+
+```text
+Application
+    |
+   HTTP
+    |
+REST API
+```
+
+MCP:
+
+```text
+AI Application
+    |
+MCP Client
+    |
+MCP Server
+    |
+AI-accessible capabilities
+```
+
+An MCP Server can itself use REST APIs internally:
+
+```text
+AI Agent
+   |
+MCP Client
+   |
+MCP Server
+   |
+REST API
+   |
+Enterprise System
+```
+
+## 10. MCP vs Function Calling
+
+Function calling is primarily a mechanism through which an LLM/application selects and invokes a tool.
+
+MCP is a standardized protocol for connecting AI applications with external capabilities and context.
+
+```text
+Function Calling:
+
+LLM
+ |
+Tool schema
+ |
+Application function
+```
+
+versus:
+
+```text
+MCP:
+
+AI Application
+ |
+MCP Client
+ |
+MCP Server
+ |
+Capability
+```
+
+They are related but not the same thing.
+
+## 11. Discovery
+
+An MCP Client can discover what an MCP Server exposes.
+
+```text
+Connect to MCP Server
+        |
+        v
+Discover capabilities
+        |
+        +-- Tools
+        +-- Resources
+        +-- Prompts
+```
+
+The client does not need to know the server's internal implementation.
+
+## 12. USB-C Analogy
+
+MCP can be thought of as a standardized connector/interface.
+
+The important idea is:
+
+> The client does not need to know the server's internal implementation as long as the MCP-facing contract remains compatible.
+
+For example:
+
+```text
+Before:
+
+MCP Server
+  |
+Java
+  |
+REST API A
+
+
+After:
+
+MCP Server
+  |
+Python
+  |
+REST API B
+```
+
+If the MCP-facing capability contract remains compatible, the client does not need to know about the internal implementation change.
+
+This does not mean the client can never change. If the server changes its exposed tool name, schema, or behavior incompatibly, the client/agent may need adaptation.
+
+## Day 9 Key Takeaways
+
+1. MCP = Model Context Protocol.
+2. MCP provides a standardized protocol for AI applications to access external capabilities.
+3. MCP Host = AI application.
+4. MCP Client communicates with MCP Servers.
+5. MCP Server exposes capabilities.
+6. MCP Tools represent actions.
+7. MCP Resources provide information/context.
+8. MCP Prompts provide reusable prompt templates.
+9. MCP is not the same as REST.
+10. MCP is not the same as function calling.
+11. MCP decouples the client from the server's internal implementation when the MCP contract remains compatible.
+12. The Agent remains the decision maker; the MCP Server provides capabilities.
+
+---
+
+# Day 10 — Build MCP Server
+
+## Objective
+
+Move from MCP theory to implementation.
+
+Day 10 goal:
+
+> Build a standalone MCP Server and expose a real MCP Tool.
+
+The first tool created was:
+
+```text
+getCompanyPolicy
+```
+
+The tool accepts a policy name and returns structured policy information.
+
+## 1. Project Architecture
+
+```text
+ai-copilot/
+|
++-- ai-copilot-app/
+|      |
+|      +-- Agent
+|      +-- RAG
+|      +-- Native Spring AI Tools
+|      +-- Memory
+|
++-- ai-copilot-mcp-server/
+       |
+       +-- MCP Server
+       +-- MCP Tools
+```
+
+The MCP Server is an independent Spring Boot application.
+
+Current ports:
+
+```text
+ai-copilot-app
+    -> 8080
+
+ai-copilot-mcp-server
+    -> 8090
+```
+
+## 2. Why Separate MCP Server?
+
+The purpose is to demonstrate a real protocol boundary:
+
+```text
+AI Application
+      |
+      | MCP
+      v
+Separate MCP Server
+```
+
+We did not force the existing RAG implementation into the MCP Server.
+
+The MCP Server is a separate application, so directly importing `RagRetrievalService` would create poor coupling.
+
+The first MCP Server capability is intentionally standalone.
+
+## 3. MCP Server Dependency
+
+The MCP Server uses the Spring AI MCP WebMVC server starter:
+
+```xml
+<dependency>
+    <groupId>org.springframework.ai</groupId>
+    <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+</dependency>
+```
+
+The MCP server does not need OpenAI, PGVector, JPA, or the application's RAG dependencies for this first capability.
+
+## 4. MCP Server Configuration
+
+Example:
+
+```yaml
+server:
+  port: 8090
+
+spring:
+  application:
+    name: ai-copilot-mcp-server
+
+  ai:
+    mcp:
+      server:
+        name: omni-ai-mcp-server
+        version: 1.0.0
+        protocol: STREAMABLE
+        type: SYNC
+```
+
+Important configuration concepts:
+
+- Server name
+- Server version
+- MCP protocol/transport configuration
+- Synchronous server type
+
+## 5. MCP Server Application
+
+The MCP Server has its own Spring Boot entry point:
+
+```java
+@SpringBootApplication
+public class AiCopilotMcpServerApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(
+            AiCopilotMcpServerApplication.class,
+            args
+        );
+    }
+}
+```
+
+This application runs independently on port 8090.
+
+## 6. First MCP Tool
+
+The first tool is:
+
+```text
+getCompanyPolicy
+```
+
+Its purpose is to retrieve a company policy by policy name.
+
+Conceptual contract:
+
+```text
+Tool:
+    getCompanyPolicy
+
+Input:
+    policyName
+
+Output:
+    CompanyPolicy
+```
+
+Example:
+
+```text
+Input:
+    refund
+
+Output:
+    Company Refund Policy
+    refundWindowDays = 45
+    applicableCustomerTypes =
+        STANDARD
+        ENTERPRISE
+```
+
+## 7. MCP Tool Annotation
+
+The tool is exposed using Spring AI's MCP annotation:
+
+```java
+@McpTool(
+    name = "getCompanyPolicy",
+    description = "Retrieve a company policy by policy name."
+)
+```
+
+The input parameter is described using:
+
+```java
+@McpToolParam(
+    description = "The policy name, for example refund",
+    required = true
+)
+```
+
+Conceptually:
+
+```text
+Java Method
+     |
+     v
+MCP Tool Definition
+     |
+     v
+MCP Server
+     |
+     v
+MCP Client can discover/use it
+```
+
+## 8. Tool Validation
+
+The tool validates its input.
+
+Example:
+
+```java
+if (policyName == null || policyName.isBlank()) {
+    throw new IllegalArgumentException(
+        "Policy name must not be blank"
+    );
+}
+```
+
+Unknown policies are also rejected.
+
+The tool follows the earlier tool-engineering principles:
+
+- clear contract
+- meaningful description
+- input validation
+- predictable output
+
+## 9. Structured Output
+
+The tool returns a structured object:
+
+```java
+public record CompanyPolicy(
+    String policyName,
+    int refundWindowDays,
+    String[] applicableCustomerTypes
+) {
+}
+```
+
+Structured output is preferable to arbitrary text because the consuming application can work with explicit fields.
+
+## 10. What the MCP Server Does
+
+The server:
+
+```text
+Receive MCP request
+       |
+Validate input
+       |
+Execute capability
+       |
+Return result
+```
+
+The server does NOT:
+
+```text
+X Decide which tool should be called
+X Reason about the user's overall request
+X Create an agent plan
+X Run an autonomous agent loop
+```
+
+Those responsibilities belong to the AI application/agent.
+
+## 11. Day 10 Architecture
+
+```text
+                  MCP Client / Test
+                         |
+                    MCP Protocol
+                         |
+                         v
+                +------------------+
+                |   MCP Server     |
+                |      :8090       |
+                +--------+---------+
+                         |
+                         v
+                getCompanyPolicy
+                         |
+                         v
+                  CompanyPolicy
+```
+
+The AI Copilot Agent is not connected to this MCP Server yet.
+
+## 12. Why Agent Testing Is Not Possible Yet
+
+Current state:
+
+```text
+ai-copilot-app :8080
+        |
+        X
+        |
+ai-copilot-mcp-server :8090
+```
+
+There is currently no MCP Client in the AI Copilot application.
+
+Therefore the Agent cannot use the MCP tool yet.
+
+Next architecture:
+
+```text
+User
+ |
+Agent
+ |
+MCP Client
+ |
+MCP Server
+ |
+getCompanyPolicy
+ |
+Result
+ |
+Agent
+ |
+Final Answer
+```
+
+That integration comes next.
+
+## Day 10 Key Takeaways
+
+1. MCP Server is a capability provider.
+2. MCP Server is not an Agent.
+3. An MCP Server can expose Tools, Resources and Prompts.
+4. Day 10 implemented the first Tool.
+5. `@McpTool` exposes a server capability.
+6. `@McpToolParam` describes tool input.
+7. MCP tools should have clear contracts and validation.
+8. Structured output is preferable to arbitrary text.
+9. The MCP Server is a separate application in our project.
+10. The MCP Server does not need an LLM.
+11. The Agent has not been connected to MCP yet.
+12. The MCP Client integration comes next.
+
+---
+
+# Day 9 + Day 10 Final Architecture
+
+```text
+                         OmniAI
+                           |
+                  +--------+--------+
+                  |                 |
+                  v                 v
+             AI Copilot       MCP Server
+               :8080             :8090
+                  |                 |
+             +----+----+            |
+             |         |            |
+           Agent      RAG      getCompanyPolicy
+             |
+        Native Tools
+             |
+          Memory
+
+
+Future:
+
+Agent
+  |
+MCP Client
+  |
+MCP Server
+  |
+External / Enterprise Capabilities
+```
+
+## Current Status
+
+```text
+P3 Day 9  — MCP Fundamentals       COMPLETE
+P3 Day 10 — MCP Server + Tool      COMPLETE
+```
+
+## Next
+
+**P3 Day 11 — MCP Client**
+
+Goal:
+
+```text
+ai-copilot-app
+      |
+   MCP Client
+      |
+      v
+ai-copilot-mcp-server
+      |
+getCompanyPolicy
+```
+
+Then the MCP capability can be made available to the Agent.
+
+# P3 Day 11 — MCP Client Integration
+
+## 1. Goal
+
+Integrate the existing AI Copilot application with the standalone MCP Server.
+
+Architecture:
+
+```text
+ai-copilot-app :8080
+        |
+        | MCP Client
+        v
+ai-copilot-mcp-server :8090
+        |
+        v
+getCompanyPolicy
+```
+
+The goal is to allow the existing Agent to use MCP tools alongside native Spring AI tools.
+
+---
+
+## 2. MCP Client Responsibilities
+
+The MCP Client is responsible for:
+
+- Connecting to an MCP Server
+- Initializing the MCP session
+- Discovering server capabilities
+- Discovering available tools
+- Exposing discovered MCP tools to the AI application
+- Invoking MCP tools when the Agent decides to use them
+
+The MCP Client is **not** the Agent.
+
+```text
+Agent
+  = decision maker
+
+MCP Client
+  = communication/protocol layer
+
+MCP Server
+  = capability provider
+```
+
+---
+
+## 3. Existing Architecture
+
+The project now contains two Spring Boot applications:
+
+```text
+ai-copilot/
+│
+├── ai-copilot-app/              :8080
+│   ├── Agent
+│   ├── Native Spring AI Tools
+│   ├── RAG
+│   ├── Memory
+│   └── MCP Client
+│
+└── ai-copilot-mcp-server/       :8090
+    └── MCP Tools
+```
+
+The MCP Server is a separate application and does not directly share Java classes with the main application.
+
+---
+
+## 4. MCP Client Dependency
+
+In `ai-copilot-app/pom.xml`:
+
+```xml
+<dependency>
+    <groupId>org.springframework.ai</groupId>
+    <artifactId>spring-ai-starter-mcp-client</artifactId>
+</dependency>
+```
+
+Spring AI provides the MCP client implementation and manages the protocol communication.
+
+---
+
+## 5. MCP Client Configuration
+
+The main application uses the MCP server through Streamable HTTP:
+
+```yaml
+spring:
+  ai:
+    mcp:
+      client:
+        enabled: true
+        name: omni-ai-client
+        version: 1.0.0
+        type: SYNC
+        request-timeout: 20s
+
+        streamable-http:
+          connections:
+            company-mcp:
+              url: http://localhost:8090
+```
+
+Important:
+
+- MCP Server runs on `8090`
+- AI Copilot runs on `8080`
+- `company-mcp` identifies the configured MCP connection
+- Spring AI handles MCP protocol communication
+
+---
+
+## 6. MCP Discovery
+
+On application startup, the MCP Client connects to the MCP Server.
+
+The startup logs confirmed:
+
+```text
+Server response with Protocol: 2025-11-25
+Capabilities:
+  prompts
+  resources
+  tools
+```
+
+and:
+
+```text
+Implementation:
+name=omni-ai-mcp-server
+```
+
+This proves:
+
+```text
+AI Copilot
+    ↓
+MCP Client
+    ↓
+MCP Server
+```
+
+connection and capability discovery are working.
+
+---
+
+## 7. MCP Tool Discovery
+
+The MCP Server exposes:
+
+```text
+getCompanyPolicy
+```
+
+The MCP Client discovers this capability and makes it available to the AI application as a tool callback.
+
+Conceptually:
+
+```text
+MCP Server
+    ↓
+getCompanyPolicy
+    ↓
+MCP Client
+    ↓
+ToolCallback
+    ↓
+ChatClient / Agent
+```
+
+Spring AI allows MCP tool callbacks/providers to be supplied to the ChatClient.
+
+---
+
+## 8. Native Tools vs MCP Tools
+
+The Agent can now work with both types of tools.
+
+### Native Spring AI Tools
+
+```text
+searchKnowledge
+checkRefundEligibility
+createExecutionPlan
+```
+
+### MCP Tools
+
+```text
+getCompanyPolicy
+```
+
+Architecture:
+
+```text
+                     Agent
+                       |
+             ┌─────────┴─────────┐
+             ↓                   ↓
+      Native Tools           MCP Tools
+             |                   |
+      Spring AI Tool        MCP Client
+             |                   |
+             |              MCP Server
+             |                   |
+             |           getCompanyPolicy
+             |
+      searchKnowledge
+      checkRefundEligibility
+      createExecutionPlan
+```
+
+The Agent does not need to know whether a capability is implemented locally or remotely. It sees callable tools.
+
+---
+
+## 9. Discovery != Execution
+
+This is an important distinction.
+
+### Discovery
+
+Means:
+
+> "What capabilities does this MCP Server expose?"
+
+Example:
+
+```text
+getCompanyPolicy
+```
+
+being discovered does not mean the tool has been executed.
+
+### Execution
+
+Execution happens only when the Agent decides to call the tool.
+
+```text
+User request
+     ↓
+LLM
+     ↓
+decides MCP tool is required
+     ↓
+getCompanyPolicy
+     ↓
+MCP Server executes
+     ↓
+tool result
+     ↓
+LLM continues
+```
+
+Tool availability does not guarantee tool execution.
+
+---
+
+## 10. Agent + MCP Execution
+
+The Agent now supports a mixed tool environment.
+
+Example:
+
+```text
+User:
+"Find the refund policy and check whether I am eligible."
+```
+
+Possible execution:
+
+```text
+Agent
+  ↓
+getCompanyPolicy          ← MCP
+  ↓
+Company Refund Policy
+  ↓
+checkRefundEligibility    ← Native
+  ↓
+Eligibility result
+  ↓
+Final answer
+```
+
+The LLM decides the sequence.
+
+The tools themselves do not call each other.
+
+---
+
+## 11. Day 11 Implementation
+
+The existing `AgentService` receives the MCP tool provider:
+
+```java
+private final SyncMcpToolCallbackProvider mcpTools;
+```
+
+and passes it along with the existing native tools:
+
+```java
+AgentResponse response = client.getChatResponseWithToolCall(
+        SYSTEM_PROMPT,
+        prompt,
+        chatRequest.conversationId(),
+        knowledgeSearchTool,
+        plannerTool,
+        mcpTools
+);
+```
+
+The AI provider then supplies these capabilities to the ChatClient.
+
+The exact tool-calling loop is managed by Spring AI.
+
+---
+
+## 12. Spring AI Tool Calling Loop
+
+The application does not manually implement:
+
+```java
+while (toolCall) {
+    ...
+}
+```
+
+Spring AI manages the loop.
+
+Conceptually:
+
+```text
+LLM
+ ↓
+Tool call
+ ↓
+ToolCallingManager
+ ↓
+Tool execution
+ ↓
+Tool result
+ ↓
+LLM
+ ↓
+Another tool call?
+ ├── Yes → execute again
+ └── No  → final answer
+```
+
+This is the same mechanism used for native tools and MCP tools.
+
+---
+
+## 13. Testing
+
+### Test 1 — MCP Tool
+
+Request:
+
+```json
+{
+  "conversationId": "mcp-test-1",
+  "message": "Use the company policy tool to find the refund policy and tell me the refund window for STANDARD customers.",
+  "tenantId": "1"
+}
+```
+
+Observed:
+
+```text
+Executing tool call: getCompanyPolicy
+```
+
+Request completed successfully.
+
+---
+
+### Test 2 — MCP + Native Tool
+
+Request:
+
+```json
+{
+  "conversationId": "hybrid-test-1",
+  "message": "First use the company policy system to find the refund policy. Then use the refund eligibility tool to check whether a STANDARD customer who purchased on 2026-09-01 is eligible.",
+  "tenantId": "1"
+}
+```
+
+Observed:
+
+```text
+Executing tool call: getCompanyPolicy
+Executing tool call: checkRefundEligibility
+Successful execution of tool: checkRefundEligibility
+```
+
+Final result:
+
+```text
+According to the Company Refund Policy
+(45-day refund window for STANDARD customers),
+a purchase on 2026-09-01 is only 25 days old,
+so the STANDARD customer is eligible for a refund.
+```
+
+This proves the complete hybrid flow:
+
+```text
+MCP Tool
+   ↓
+Native Tool
+   ↓
+Final Answer
+```
+
+works successfully.
+
+---
+
+## 14. Important Debugging Lesson
+
+During testing, an earlier request produced:
+
+```text
+attempted to call tool 'JSON' which was not in request.tools
+```
+
+This should not be interpreted as:
+
+> MCP Client integration is broken.
+
+Later tests proved that MCP execution itself works.
+
+The successful hybrid test demonstrated:
+
+```text
+MCP + Native Tools + Agent Loop + Structured Final Response
+```
+
+can work in the current application.
+
+Therefore, the `JSON` error was conditional to a particular model/tool-call execution path rather than a basic MCP connectivity failure.
+
+The important debugging distinction is:
+
+```text
+MCP connection failure
+        ≠
+MCP tool execution failure
+        ≠
+LLM tool-selection/request failure
+```
+
+Always inspect the exact failing layer from logs before changing the architecture.
+
+---
+
+## 15. Key Architecture Decision
+
+MCP Server remains a separate application.
+
+We do **not** directly import classes such as:
+
+```text
+RagRetrievalService
+KnowledgeSearchTool
+```
+
+into the MCP Server.
+
+Instead:
+
+```text
+AI Copilot
+     |
+     | MCP
+     ↓
+MCP Server
+     |
+     ↓
+MCP capability
+```
+
+This preserves the protocol boundary and allows the MCP Server to evolve independently.
+
+---
+
+## 16. What Day 11 Added
+
+Before Day 11:
+
+```text
+Agent
+ └── Native Spring AI Tools
+```
+
+After Day 11:
+
+```text
+Agent
+ ├── Native Spring AI Tools
+ │    ├── searchKnowledge
+ │    ├── checkRefundEligibility
+ │    └── createExecutionPlan
+ │
+ └── MCP Tools
+      └── getCompanyPolicy
+```
+
+The Agent can now operate across both local and remote capabilities.
+
+---
+
+## 17. Interview Takeaways
+
+### What is an MCP Client?
+
+A component that connects an AI application to an MCP Server and discovers/invokes MCP capabilities.
+
+### Does MCP Client make decisions?
+
+No.
+
+The Agent/LLM decides which tool to use.
+
+### Does MCP Server contain the Agent?
+
+Not necessarily.
+
+In this project, the MCP Server is a capability provider and has no LLM-based Agent.
+
+### Can native and MCP tools coexist?
+
+Yes.
+
+Spring AI exposes both as callable tools to the Agent.
+
+### Is tool discovery the same as tool execution?
+
+No.
+
+Discovery tells the application what is available. The Agent must still decide to execute a tool.
+
+### Does the application manually implement the tool loop?
+
+No.
+
+Spring AI's tool-calling infrastructure manages the model → tool → result → model cycle.
+
+---
+
+## 18. Day 11 Summary
+
+Day 11 established the MCP Client side of the architecture.
+
+We now have:
+
+```text
+                AI Copilot :8080
+                      |
+                 MCP Client
+                      |
+                      ↓
+              MCP Server :8090
+                      |
+                      ↓
+               getCompanyPolicy
+```
+
+and the Agent can combine:
+
+```text
+Native Tools + MCP Tools
+```
+
+inside the same agentic execution flow.
+
+**Day 11 Status: COMPLETE**

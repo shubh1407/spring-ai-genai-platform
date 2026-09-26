@@ -1,0 +1,15 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: ai-copilot-mcp-server
+
+  ai:
+    mcp:
+      server:
+        name: omni-ai-mcp-server
+        annotation-scanner:
+          enabled: true
+        protocol: STREAMABLE
+        type: SYNC

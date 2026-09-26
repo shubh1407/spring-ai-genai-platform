@@ -206,13 +206,13 @@ public class AiProviderClient {
     @Bulkhead(name = "aiProvider")
     @RateLimiter(name= "aiProvider")
     @CircuitBreaker(name="aiProvider")
-    public AgentResponse getChatResponseWithToolCall(String systemPrompt, String prompt, String conversationId, Object ... tools) {
+    public String getChatResponseWithToolCall(String systemPrompt, String prompt, String conversationId, Object ... tools) {
 
         String operation = "chat.response.tool.call";
         long startedAt = System.nanoTime();
         log.info("ai.provider.request.started operation={} provider={} model={} conversationId={}", operation, PROVIDER, MODEL, conversationId);
         try {
-            AgentResponse response = client.prompt()
+            String response = client.prompt()
                     .system(systemPrompt)
                     .user(prompt)
                     .tools(tools)
@@ -220,7 +220,7 @@ public class AiProviderClient {
                     .advisors(advisorSpec ->
                             advisorSpec.param(ChatMemory.CONVERSATION_ID, conversationId))
                     .call()
-                    .entity(AgentResponse.class);
+                    .content();
 
             long latencyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
             recordAiMetrics(operation, "success", null, latencyMs);
