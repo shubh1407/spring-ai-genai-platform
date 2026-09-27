@@ -1,0 +1,99 @@
+spring:
+  application:
+    name: ai-copilot
+  datasource:
+    url: jdbc:postgresql://localhost:5432/openAi
+    username: postgres
+    password: admin
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        default_schema: rag
+  ai:
+    retry:
+      max-attempts: 3
+      backoff:
+        initial-interval: 1s
+        multiplier: 2
+        max-interval: 5s
+      on-client-errors: true
+    openai:
+      api-key: ${GROQ_API_KEY}
+      base-url: https://api.groq.com/openai/v1
+      chat:
+        model: openai/gpt-oss-120b
+        extra-body:
+          reasoning_effort: high
+      timeout: 30s
+    model:
+      embedding:
+        text: google-genai
+    google:
+      genai:
+        embedding:
+          api-key: ${GOOGLE_API_KEY}
+          project-id: gen-lang-client-0321316403
+          text:
+            model: gemini-embedding-2
+    vectorstore:
+      pgvector:
+        # Automatically creates the 'vector_store' table and extensions on startup
+        initialize-schema: true
+        # Matches OpenAI text-embedding-ada-002 dimensions (change if using another model)
+        dimensions: 3072
+        # Distance metric (COSINE_DISTANCE, EUCLIDEAN_DISTANCE, or NEGATIVE_INNER_PRODUCT)
+        distance-type: COSINE_DISTANCE
+        # Index type (HNSW, IVFFLAT, or NONE)
+        index-type: NONE
+        schema-name: rag
+    mcp:
+      client:
+        enabled: true
+        name: omni-ai-client
+        version: 1.0.0
+        type: SYNC
+        request-timeout: 20s
+        streamable-http:
+          connections:
+            company-mcp:
+              url: http://localhost:8090
+
+
+logging:
+  level:
+    org.springframework.ai: DEBUG
+    org.springframework.retry: DEBUG
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      aiProvider:
+        sliding-window-size: 5
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 2
+  ratelimiter:
+    instances:
+      aiProvider:
+        limit-for-period: 30
+        limit-refresh-period: 30s
+        timeout-duration: 0
+  bulkhead:
+    instances:
+      aiProvider:
+        max-concurrent-calls: 5
+        max-wait-duration: 1s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
