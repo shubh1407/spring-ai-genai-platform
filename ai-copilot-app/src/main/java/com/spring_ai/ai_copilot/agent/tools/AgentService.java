@@ -219,7 +219,7 @@ public class AgentService {
         this.client = client;
     }
 
-    public String getChatResponse(AgentChatRequest chatRequest) {
+    public AgentResponse getChatResponse(AgentChatRequest chatRequest) {
         log.info("service.agent.response.started operation=chat.response");
         try {
             PromptTemplate promptTemplate = PromptTemplate.builder()
@@ -233,7 +233,31 @@ public class AgentService {
                     .build();
 
             String prompt = promptTemplate.render(Map.of("message", chatRequest.message()));
-            String response = client.getChatResponseWithToolCall(SYSTEM_PROMPT,prompt, chatRequest.conversationId(),knowledgeSearchTool,plannerTool,mcpTools);
+            AgentResponse response = client.getChatResponseWithToolCall(SYSTEM_PROMPT,prompt, chatRequest.conversationId(),knowledgeSearchTool,plannerTool);
+            log.info("service.agent.response.completed operation=chat.response status=success");
+            return response;
+        } catch (Exception e) {
+            log.warn("service.agent.response.failed operation=chat.response status=error errorCode={} exception={}",
+                    resolveErrorCode(e), e.getClass().getSimpleName());
+            throw aiExceptionTranslator.translate(e);
+        }
+    }
+
+    public String getChatResponseWithMcpTools(AgentChatRequest chatRequest) {
+        log.info("service.agent.response.started operation=chat.response");
+        try {
+            PromptTemplate promptTemplate = PromptTemplate.builder()
+                    .template("""
+                            You are a helpful AI assistant.
+                            Answer the user's question clearly and concisely.
+
+                            User message:
+                            {message}
+                            """)
+                    .build();
+
+            String prompt = promptTemplate.render(Map.of("message", chatRequest.message()));
+            String response = client.getChatResponseWithToolCallWithMcpTools(SYSTEM_PROMPT,prompt, chatRequest.conversationId(),knowledgeSearchTool,plannerTool,mcpTools);
             log.info("service.agent.response.completed operation=chat.response status=success");
             return response;
         } catch (Exception e) {

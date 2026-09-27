@@ -28,12 +28,26 @@ public class AgentController {
         this.tenantContext = tenantContext;
     }
 
-    @PostMapping("/agent-ask")
-    public ResponseEntity<String> agentAsk(@RequestBody AgentChatRequest chatRequest) {
+    @PostMapping("/agent-ask-mcp")
+    public ResponseEntity<String> agentAskWithMcpTool(@RequestBody AgentChatRequest chatRequest) {
         tenantContext.setTenantId(chatRequest.tenantId());
         log.info("controller.agent.request.started operation=agent.chat.request");
         try {
-            String response = agentService.getChatResponse(chatRequest);
+            String response = agentService.getChatResponseWithMcpTools(chatRequest);
+            log.info("controller.agent.request.completed operation=agent.chat.request status=success");
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.warn("controller.agent.request.failed operation=agent.chat.request status=error exception={}", e.getClass().getSimpleName());
+            throw e;
+        }
+    }
+
+    @PostMapping("/agent-ask")
+    public ResponseEntity<AgentResponse> agentAsk(@RequestBody AgentChatRequest chatRequest) {
+        tenantContext.setTenantId(chatRequest.tenantId());
+        log.info("controller.agent.request.started operation=agent.chat.request");
+        try {
+            AgentResponse response = agentService.getChatResponse(chatRequest);
             log.info("controller.agent.request.completed operation=agent.chat.request status=success");
             return ResponseEntity.ok(response);
         } catch (Exception e) {

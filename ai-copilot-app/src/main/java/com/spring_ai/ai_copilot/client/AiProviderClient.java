@@ -206,7 +206,42 @@ public class AiProviderClient {
     @Bulkhead(name = "aiProvider")
     @RateLimiter(name= "aiProvider")
     @CircuitBreaker(name="aiProvider")
-    public String getChatResponseWithToolCall(String systemPrompt, String prompt, String conversationId, Object ... tools) {
+    public AgentResponse getChatResponseWithToolCall(String systemPrompt, String prompt, String conversationId, Object ... tools) {
+
+        String operation = "chat.response.tool.call";
+        long startedAt = System.nanoTime();
+        log.info("ai.provider.request.started operation={} provider={} model={} conversationId={}", operation, PROVIDER, MODEL, conversationId);
+        try {
+            AgentResponse response = client.prompt()
+                    .system(systemPrompt)
+                    .user(prompt)
+                    .tools(tools)
+                    .advisors(messageChatMemoryAdvisor)
+                    .advisors(advisorSpec ->
+                            advisorSpec.param(ChatMemory.CONVERSATION_ID, conversationId))
+                    .call()
+                    .entity(AgentResponse.class);
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            recordAiMetrics(operation, "success", null, latencyMs);
+            log.info("ai.provider.request.completed operation={} provider={} model={} latencyMs={} status=success", operation, PROVIDER, MODEL, latencyMs);
+            return response;
+        } catch (Exception e) {
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            String errorCode = "AI_PROVIDER_ERROR";
+            recordAiMetrics(operation, "error", errorCode, latencyMs);
+            log.warn("ai.provider.request.failed operation={} provider={} model={} latencyMs={} errorCode={} exception={}",
+                    operation, PROVIDER, MODEL, latencyMs, errorCode, e.getClass().getSimpleName());
+            throw e;
+        }
+
+
+    }
+
+    @Bulkhead(name = "aiProvider")
+    @RateLimiter(name= "aiProvider")
+    @CircuitBreaker(name="aiProvider")
+    public String getChatResponseWithToolCallWithMcpTools(String systemPrompt, String prompt, String conversationId, Object ... tools) {
 
         String operation = "chat.response.tool.call";
         long startedAt = System.nanoTime();
@@ -234,8 +269,6 @@ public class AiProviderClient {
                     operation, PROVIDER, MODEL, latencyMs, errorCode, e.getClass().getSimpleName());
             throw e;
         }
-
-
     }
 
     @Bulkhead(name = "aiProvider")
