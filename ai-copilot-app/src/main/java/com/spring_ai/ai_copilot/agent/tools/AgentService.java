@@ -3,11 +3,10 @@ package com.spring_ai.ai_copilot.agent.tools;
 import com.spring_ai.ai_copilot.client.AiProviderClient;
 import com.spring_ai.ai_copilot.dto.AgentChatRequest;
 import com.spring_ai.ai_copilot.dto.AgentResponse;
-import com.spring_ai.ai_copilot.dto.ChatRequest;
-import com.spring_ai.ai_copilot.dto.ChatResponse;
 import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 import com.spring_ai.ai_copilot.exception.AiProviderException;
-import com.spring_ai.ai_copilot.service.ChatService;
+import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.spec.McpSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.prompt.PromptTemplate;
@@ -16,17 +15,20 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class AgentService {
 
-    private static final Logger log = LoggerFactory.getLogger(AgentService.class);
+    private static final Logger log =
+            LoggerFactory.getLogger(AgentService.class);
 
     private final KnowledgeSearchTool knowledgeSearchTool;
-
     private final PlannerTool plannerTool;
-
     private final SyncMcpToolCallbackProvider mcpTools;
+    private final List<McpSyncClient> mcpClients;
+    private final AiExceptionTranslator aiExceptionTranslator;
+    private final AiProviderClient client;
 
     private static final String SYSTEM_PROMPT = """
         You are an enterprise AI agent responsible for solving the user's request
@@ -36,14 +38,12 @@ public class AgentService {
 
         UNDERSTAND → DECIDE → PLAN → EXECUTE → VALIDATE → REPLAN IF NEEDED → COMPLETE
 
-
         1. UNDERSTAND THE USER'S GOAL
 
         First understand the user's complete goal, required outcome, constraints,
         and information available from the conversation.
 
         Do not start executing tools until you understand what the user is asking.
-
 
         2. DECIDE WHETHER PLANNING IS REQUIRED
 
@@ -60,7 +60,6 @@ public class AgentService {
 
         Do not skip the planning step for a complex task.
 
-
         3. CREATE THE EXECUTION PLAN
 
         When planning is required, call the createExecutionPlan tool.
@@ -75,7 +74,6 @@ public class AgentService {
         - understand the dependencies between steps
         - determine which available tools are required
         - execute the appropriate tools according to the plan
-
 
         4. EXECUTE THE PLAN
 
@@ -92,7 +90,6 @@ public class AgentService {
         - do not assume that a successful tool call means the user's goal
           has been completed
 
-
         5. VALIDATE THE RESULT
 
         Before producing the final answer, validate whether the information
@@ -106,7 +103,6 @@ public class AgentService {
         - Is any required information missing?
         - Did the execution produce an unexpected or insufficient result?
         - Does the current result actually satisfy the user's goal?
-
 
         6. REPLAN WHEN NECESSARY
 
@@ -123,7 +119,6 @@ public class AgentService {
         Replanning is allowed whenever new information changes what needs
         to happen next.
 
-
         7. CONTINUE EXECUTION AFTER REPLANNING
 
         After receiving a revised plan:
@@ -132,36 +127,6 @@ public class AgentService {
         - select the appropriate available tools
         - execute the required actions
         - validate the new results again
-
-        The execution cycle may therefore become:
-
-        User Goal
-             ↓
-        Decide
-             ↓
-        Planning Required?
-             ↓
-            YES
-             ↓
-        createExecutionPlan
-             ↓
-        Execute Tools
-             ↓
-        Validate Results
-             ↓
-        ┌─── Result Sufficient? ───┐
-        │                          │
-       YES                        NO
-        │                          │
-        ↓                          ↓
-      Finish              createExecutionPlan
-                                   ↓
-                              Revised Plan
-                                   ↓
-                              Execute Again
-                                   ↓
-                                Validate
-
 
         8. TOOL USAGE RULES
 
@@ -175,7 +140,6 @@ public class AgentService {
         - use information obtained from previous tool results when applicable
 
         Never simulate tool execution or invent tool results.
-
 
         9. KNOWLEDGE AND ACCURACY
 
@@ -195,7 +159,6 @@ public class AgentService {
         - ask the user for it when appropriate
         - otherwise clearly state that the information is unavailable
 
-
         10. FINAL RESPONSE
 
         Only provide the final answer after validating that the available
@@ -208,20 +171,38 @@ public class AgentService {
         - not claim actions were completed when they were not completed
         """;
 
-    private final AiExceptionTranslator aiExceptionTranslator;
-    private final AiProviderClient client;
+    public AgentService(
+            KnowledgeSearchTool knowledgeSearchTool,
+            PlannerTool plannerTool,
+            SyncMcpToolCallbackProvider mcpTools,
+            List<McpSyncClient> mcpClients,
+            AiExceptionTranslator aiExceptionTranslator,
+            AiProviderClient client) {
 
-    public AgentService(KnowledgeSearchTool knowledgeSearchTool, PlannerTool plannerTool, SyncMcpToolCallbackProvider mcpTools, AiExceptionTranslator aiExceptionTranslator, AiProviderClient client) {
         this.knowledgeSearchTool = knowledgeSearchTool;
         this.plannerTool = plannerTool;
         this.mcpTools = mcpTools;
+        this.mcpClients = mcpClients;
         this.aiExceptionTranslator = aiExceptionTranslator;
         this.client = client;
     }
 
     public AgentResponse getChatResponse(AgentChatRequest chatRequest) {
-        log.info("service.agent.response.started operation=chat.response");
+
+        String operation = "agent.response";
+        long startedAt = System.nanoTime();
+
+        log.info(
+                "agent.request.started operation={} conversationId={} messageLength={}",
+                operation,
+                chatRequest.conversationId(),
+                chatRequest.message() == null
+                        ? 0
+                        : chatRequest.message().length()
+        );
+
         try {
+
             PromptTemplate promptTemplate = PromptTemplate.builder()
                     .template("""
                             You are a helpful AI assistant.
@@ -232,20 +213,68 @@ public class AgentService {
                             """)
                     .build();
 
-            String prompt = promptTemplate.render(Map.of("message", chatRequest.message()));
-            AgentResponse response = client.getChatResponseWithToolCall(SYSTEM_PROMPT,prompt, chatRequest.conversationId(),knowledgeSearchTool,plannerTool);
-            log.info("service.agent.response.completed operation=chat.response status=success");
+            String prompt = promptTemplate.render(
+                    Map.of("message", chatRequest.message())
+            );
+
+            AgentResponse response =
+                    client.getChatResponseWithToolCall(
+                            SYSTEM_PROMPT,
+                            prompt,
+                            chatRequest.conversationId(),
+                            knowledgeSearchTool,
+                            plannerTool
+                    );
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.info(
+                    "agent.request.completed operation={} conversationId={} latencyMs={} status=success",
+                    operation,
+                    chatRequest.conversationId(),
+                    latencyMs
+            );
+
             return response;
+
         } catch (Exception e) {
-            log.warn("service.agent.response.failed operation=chat.response status=error errorCode={} exception={}",
-                    resolveErrorCode(e), e.getClass().getSimpleName());
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.warn(
+                    "agent.request.failed operation={} conversationId={} latencyMs={} errorCode={} exception={}",
+                    operation,
+                    chatRequest.conversationId(),
+                    latencyMs,
+                    resolveErrorCode(e),
+                    e.getClass().getSimpleName()
+            );
+
             throw aiExceptionTranslator.translate(e);
         }
     }
 
-    public String getChatResponseWithMcpTools(AgentChatRequest chatRequest) {
-        log.info("service.agent.response.started operation=chat.response");
+    public String getChatResponseWithMcpTools(
+            AgentChatRequest chatRequest) {
+
+        String operation = "agent.response.mcp";
+        long startedAt = System.nanoTime();
+
+        log.info(
+                "agent.request.started operation={} conversationId={} messageLength={}",
+                operation,
+                chatRequest.conversationId(),
+                chatRequest.message() == null
+                        ? 0
+                        : chatRequest.message().length()
+        );
+
         try {
+
             PromptTemplate promptTemplate = PromptTemplate.builder()
                     .template("""
                             You are a helpful AI assistant.
@@ -256,24 +285,218 @@ public class AgentService {
                             """)
                     .build();
 
-            String prompt = promptTemplate.render(Map.of("message", chatRequest.message()));
-            String response = client.getChatResponseWithToolCallWithMcpTools(SYSTEM_PROMPT,prompt, chatRequest.conversationId(),knowledgeSearchTool,plannerTool,mcpTools);
-            log.info("service.agent.response.completed operation=chat.response status=success");
-            return response;
+            String prompt = promptTemplate.render(
+                    Map.of("message", chatRequest.message())
+            );
+
+            // MCP Resource
+            String policy = testMcpResources();
+
+            // MCP Prompt
+            String mcpPrompt = testMcpPrompts();
+
+            String enrichedPrompt = """
+                    MCP WORKFLOW INSTRUCTIONS:
+                    %s
+
+                    MCP POLICY CONTEXT:
+                    %s
+
+                    USER REQUEST:
+                    %s
+                    """.formatted(
+                    mcpPrompt,
+                    policy,
+                    prompt
+            );
+
+            log.info(
+                    "agent.mcp.context.prepared operation={} conversationId={} policyLength={} promptLength={}",
+                    operation,
+                    chatRequest.conversationId(),
+                    policy.length(),
+                    mcpPrompt.length()
+            );
+
+            /*
+             * MCP tools are passed as normal tool callbacks.
+             */
+            AgentResponse response =
+                    client.getChatResponseWithToolCall(
+                            SYSTEM_PROMPT,
+                            enrichedPrompt,
+                            chatRequest.conversationId(),
+                            knowledgeSearchTool,
+                            plannerTool,
+                            mcpTools
+                    );
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.info(
+                    "agent.request.completed operation={} conversationId={} latencyMs={} status=success",
+                    operation,
+                    chatRequest.conversationId(),
+                    latencyMs
+            );
+
+            return response.message();
+
         } catch (Exception e) {
-            log.warn("service.agent.response.failed operation=chat.response status=error errorCode={} exception={}",
-                    resolveErrorCode(e), e.getClass().getSimpleName());
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.warn(
+                    "agent.request.failed operation={} conversationId={} latencyMs={} errorCode={} exception={}",
+                    operation,
+                    chatRequest.conversationId(),
+                    latencyMs,
+                    resolveErrorCode(e),
+                    e.getClass().getSimpleName()
+            );
+
             throw aiExceptionTranslator.translate(e);
         }
     }
 
     private String resolveErrorCode(Throwable throwable) {
+
         if (throwable instanceof AiProviderException providerException) {
             return providerException.getErrorCode();
         }
-        if (throwable.getCause() instanceof AiProviderException providerException) {
+
+        if (throwable.getCause()
+                instanceof AiProviderException providerException) {
+
             return providerException.getErrorCode();
         }
+
         return "APPLICATION_ERROR";
+    }
+
+    public String testMcpResources() {
+
+        String uri = "company://policies/refund";
+        long startedAt = System.nanoTime();
+
+        log.info(
+                "mcp.resource.request.started uri={}",
+                uri
+        );
+
+        try {
+
+            McpSyncClient client = mcpClients.getFirst();
+
+            McpSchema.ReadResourceRequest request =
+                    McpSchema.ReadResourceRequest.builder(uri)
+                            .build();
+
+            McpSchema.ReadResourceResult result =
+                    client.readResource(request);
+
+            String content =
+                    ((McpSchema.TextResourceContents)
+                            result.contents().getFirst())
+                            .text();
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.info(
+                    "mcp.resource.request.completed uri={} latencyMs={} contentLength={} status=success",
+                    uri,
+                    latencyMs,
+                    content.length()
+            );
+
+            return content;
+
+        } catch (Exception e) {
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.warn(
+                    "mcp.resource.request.failed uri={} latencyMs={} exception={}",
+                    uri,
+                    latencyMs,
+                    e.getClass().getSimpleName()
+            );
+
+            throw e;
+        }
+    }
+
+    public String testMcpPrompts() {
+
+        String promptName = "refund-analysis";
+        long startedAt = System.nanoTime();
+
+        log.info(
+                "mcp.prompt.request.started prompt={}",
+                promptName
+        );
+
+        try {
+
+            McpSyncClient client = mcpClients.getFirst();
+
+            McpSchema.GetPromptRequest request =
+                    McpSchema.GetPromptRequest
+                            .builder(promptName)
+                            .arguments(
+                                    Map.of(
+                                            "customerType", "STANDARD",
+                                            "purchaseDate", "2026-09-01"
+                                    )
+                            )
+                            .meta(null)
+                            .build();
+
+            McpSchema.GetPromptResult result =
+                    client.getPrompt(request);
+
+            String content =
+                    ((McpSchema.TextContent)
+                            result.messages()
+                                    .getFirst()
+                                    .content())
+                            .text();
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.info(
+                    "mcp.prompt.request.completed prompt={} latencyMs={} contentLength={} status=success",
+                    promptName,
+                    latencyMs,
+                    content.length()
+            );
+
+            return content;
+
+        } catch (Exception e) {
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.warn(
+                    "mcp.prompt.request.failed prompt={} latencyMs={} exception={}",
+                    promptName,
+                    latencyMs,
+                    e.getClass().getSimpleName()
+            );
+
+            throw e;
+        }
     }
 }
