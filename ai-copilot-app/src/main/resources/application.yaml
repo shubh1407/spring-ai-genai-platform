@@ -60,7 +60,7 @@ spring:
         streamable-http:
           connections:
             company-mcp:
-              url: http://localhost:1853
+              url: http://localhost:8090
 
 
 logging:
