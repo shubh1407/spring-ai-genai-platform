@@ -523,3 +523,629 @@ Next Decision
 ```
 
 This is the foundation required for the remaining dynamic multi-agent capabilities in P4.
+
+# OmniAI — P4 Day 4 README
+## Shared Workflow State / Context
+
+**Project:** OmniAI — Enterprise AI Intelligence & Automation Platform  
+**Phase:** P4 — Multi-Agent + Enterprise AI Automation & Orchestration  
+**Day:** 4  
+**Topic:** Shared Agent State / Workflow Context  
+**Status:** Complete
+
+---
+
+## 1. Day 4 Goal
+
+Day 4 introduces a **shared workflow context** that travels through the complete orchestration lifecycle.
+
+```text
+One WorkflowContext
+        ↓
+Supervisor
+        ↓
+Specialist
+        ↓
+Result
+        ↓
+Updated WorkflowContext
+        ↓
+Supervisor again
+        ↓
+Next Specialist
+```
+
+The same workflow context represents the current state of the ongoing task.
+
+---
+
+## 2. Why Shared Context is Needed
+
+Before Day 4, `previousResults` were already being passed to the Supervisor.
+
+The problem was that the Specialist did not receive the same workflow state.
+
+For dynamic multi-agent workflows, different agents need access to the relevant state of the same ongoing task.
+
+Example:
+
+```text
+User Request
+      ↓
+Supervisor
+      ↓
+DATA Specialist
+      ↓
+Data Result
+      ↓
+Supervisor
+      ↓
+KNOWLEDGE Specialist
+```
+
+The KNOWLEDGE Specialist may need information produced earlier by the DATA Specialist.
+
+Therefore, the workflow needs a common state object.
+
+---
+
+## 3. Shared Context vs Conversation History
+
+### Conversation History
+
+Represents the conversation between user and AI.
+
+```text
+User → ...
+AI   → ...
+User → ...
+AI   → ...
+```
+
+### Workflow Context
+
+Represents the current state of the work being performed.
+
+```text
+Original Request
+Conversation ID
+Previous Results
+Current Task
+Workflow Status
+```
+
+So:
+
+```text
+Conversation = conversation
+WorkflowContext = current work state
+```
+
+---
+
+## 4. WorkflowContext
+
+`WorkflowContext` was changed from a Java `record` to a mutable class.
+
+### Why?
+
+Some workflow fields change during execution:
+
+```text
+currentTask
+workflowStatus
+previousResults
+```
+
+Current structure:
+
+```text
+WorkflowContext
+├── originalRequest
+├── conversationId
+├── previousResults
+├── currentTask
+└── workflowStatus
+```
+
+---
+
+## 5. Field Responsibilities
+
+### originalRequest
+
+The original request submitted by the user.
+
+### conversationId
+
+Identifies the conversation associated with the workflow.
+
+### previousResults
+
+Stores results produced by specialists during the current workflow.
+
+```text
+previousResults
+├── KNOWLEDGE result
+├── DATA result
+└── REPORT result
+```
+
+### currentTask
+
+Represents the task currently assigned by the Supervisor.
+
+```text
+Supervisor
+    ↓
+Decision.task()
+    ↓
+WorkflowContext.currentTask
+```
+
+It changes whenever the Supervisor delegates a new task.
+
+### workflowStatus
+
+Represents the lifecycle state of the workflow.
+
+Current enum:
+
+```text
+IN_PROGRESS
+COMPLETED
+FAILED
+WAITING_FOR_APPROVAL
+```
+
+---
+
+## 6. Why WorkflowContext is a Class
+
+A record is ideal when the object is primarily immutable data.
+
+Day 4 introduces mutable workflow state.
+
+Example:
+
+```text
+currentTask:
+Task A
+   ↓
+Task B
+   ↓
+Task C
+```
+
+and:
+
+```text
+workflowStatus:
+IN_PROGRESS
+   ↓
+COMPLETED
+```
+
+Therefore:
+
+```text
+WorkflowContext = mutable workflow state
+```
+
+The same object is maintained throughout orchestration.
+
+---
+
+## 7. Same Context Through the Workflow
+
+The Orchestrator creates the context once.
+
+```text
+AgentChatRequest
+      ↓
+Orchestrator
+      ↓
+new WorkflowContext(...)
+```
+
+The context is then reused:
+
+```text
+                    WorkflowContext
+                           │
+          ┌────────────────┼────────────────┐
+          ↓                ↓                ↓
+      Supervisor       Specialist A      Specialist B
+          │                │                │
+          └────────────────┼────────────────┘
+                           ↓
+                     Orchestrator
+                           ↓
+                    Update Context
+```
+
+**Do not create a new workflow context for every agent.**
+
+---
+
+## 8. Supervisor Receives the Context
+
+The Supervisor receives the `WorkflowContext`.
+
+For the current implementation, the Supervisor prompt uses:
+
+```text
+Original Request
++
+Previous Specialist Results
+```
+
+Conceptually:
+
+```text
+User message:
+{originalRequest}
+
+Previous Specialist Results:
+{previousResults}
+```
+
+Previous results are formatted into readable text before being sent to the LLM.
+
+Example:
+
+```text
+Specialist: KNOWLEDGE
+Status: SUCCESS
+Result: Standard customers can request a refund within 45 days of purchase.
+Sources: company-policy.txt
+```
+
+---
+
+## 9. Specialist Receives the Same Context
+
+Day 4 extends context propagation to Specialists.
+
+`SpecialistRequest` now contains:
+
+```text
+conversationId
+tenantId
+task
+originalMessage
+WorkflowContext
+```
+
+Therefore:
+
+```text
+WorkflowContext
+      +
+Supervisor Task
+      ↓
+SpecialistRequest
+      ↓
+Specialist
+```
+
+The Specialist can access the state of the workflow while executing its assigned task.
+
+---
+
+## 10. Orchestrator Owns State Updates
+
+The Specialist should not directly control workflow state.
+
+Preferred flow:
+
+```text
+Specialist
+    ↓
+SpecialistResult
+    ↓
+Orchestrator
+    ↓
+Update WorkflowContext
+```
+
+Current flow:
+
+```text
+Supervisor Decision
+      ↓
+context.currentTask = decision.task
+      ↓
+Specialist executes
+      ↓
+SpecialistResult
+      ↓
+context.previousResults.add(result)
+      ↓
+Supervisor again
+```
+
+This keeps workflow control inside the Orchestrator.
+
+---
+
+## 11. Day 4 Complete Flow
+
+```text
+                         User Request
+                              ↓
+                         Orchestrator
+                              ↓
+                    ┌──────────────────┐
+                    │ WorkflowContext  │
+                    │                  │
+                    │ originalRequest  │
+                    │ conversationId   │
+                    │ previousResults  │
+                    │ currentTask      │
+                    │ workflowStatus   │
+                    └────────┬─────────┘
+                             ↓
+                         Supervisor
+                             ↓
+                       SupervisorDecision
+                             ↓
+                        DELEGATE
+                             ↓
+                    Update currentTask
+                             ↓
+                         Specialist
+                             ↓
+                    SpecialistResult
+                             ↓
+                  Add result to context
+                             ↓
+                         Supervisor
+                             ↓
+                    DELEGATE / FINISH
+```
+
+---
+
+## 12. Example
+
+Suppose the user asks:
+
+```text
+"Why are customers requesting refunds?"
+```
+
+Initial state:
+
+```text
+WorkflowContext
+├── originalRequest = "Why are customers requesting refunds?"
+├── conversationId = ...
+├── previousResults = []
+├── currentTask = null
+└── workflowStatus = IN_PROGRESS
+```
+
+Supervisor decides:
+
+```text
+DELEGATE → KNOWLEDGE
+Task = "Find refund-related company policy."
+```
+
+Context becomes:
+
+```text
+currentTask =
+"Find refund-related company policy."
+```
+
+Knowledge Specialist executes.
+
+Result:
+
+```text
+Standard customers can request a refund within 45 days of purchase.
+```
+
+Orchestrator updates:
+
+```text
+previousResults
+└── KNOWLEDGE result
+```
+
+Supervisor receives the updated context and can make the next decision.
+
+---
+
+## 13. Important Architecture Principle
+
+Agents should not need direct knowledge of other agents.
+
+Avoid:
+
+```text
+Agent A ─────→ Agent B
+```
+
+Prefer:
+
+```text
+Agent A
+   ↓
+WorkflowContext
+   ↓
+Orchestrator
+   ↓
+Supervisor
+   ↓
+Agent B
+```
+
+This keeps Specialists loosely coupled.
+
+The Orchestrator remains responsible for workflow control.
+
+---
+
+## 14. Day 4 Implementation Changes
+
+### Added
+
+- `WorkflowContext` mutable class
+- `currentTask`
+- `workflowStatus`
+- `WorkflowStatus` enum
+- `WorkflowContext` inside `SpecialistRequest`
+- Context propagation from Orchestrator to Specialist
+
+### Preserved
+
+- `previousResults`
+- Supervisor decision flow
+- `DELEGATE / FINISH`
+- Specialist resolver
+- Specialist execution
+- P1/P2 exception framework
+- P3 request model
+- RAG/tool functionality
+
+---
+
+## 15. Key Learning
+
+### Shared State
+
+Multiple agents working on one task need access to the state of that task.
+
+### Same Context
+
+The workflow carries the same context object across the execution lifecycle.
+
+### Orchestrator Ownership
+
+The Orchestrator controls state updates rather than individual agents controlling the workflow.
+
+### Loose Coupling
+
+Agents should communicate through workflow state/orchestration rather than directly depending on other agents.
+
+### Context vs Result
+
+```text
+SpecialistResult
+    =
+What one specialist produced
+
+WorkflowContext
+    =
+Current state of the entire workflow
+```
+
+---
+
+## 16. Day 4 Revision
+
+Remember:
+
+```text
+User
+ ↓
+Orchestrator
+ ↓
+WorkflowContext
+ ↓
+Supervisor
+ ↓
+Decision
+ ↓
+Update currentTask
+ ↓
+Specialist + same WorkflowContext
+ ↓
+SpecialistResult
+ ↓
+Update previousResults
+ ↓
+Supervisor again
+```
+
+**Core idea:**
+
+> One workflow → one shared context → many agents → continuous state updates.
+
+---
+
+## 17. Definition of Done
+
+- [x] Workflow state identified as a separate concept
+- [x] `WorkflowContext` created
+- [x] `WorkflowContext` changed from record to mutable class
+- [x] Original request stored in context
+- [x] Conversation ID stored in context
+- [x] Previous specialist results stored in context
+- [x] Current task added to context
+- [x] Workflow status added to context
+- [x] `WorkflowStatus` enum created
+- [x] Same context passed to Supervisor
+- [x] Same context passed to Specialist
+- [x] `SpecialistRequest` carries WorkflowContext
+- [x] Orchestrator updates current task
+- [x] Orchestrator updates previous results
+- [x] Workflow starts as `IN_PROGRESS`
+- [x] Successful workflow becomes `COMPLETED`
+
+---
+
+## 18. P4 Progress
+
+```text
+Day 1  ✅ Multi-agent concept & architecture
+Day 2  ✅ Dynamic Supervisor decision
+Day 3  ✅ Supervisor → Specialist → Result → Supervisor
+Day 4  ✅ Shared workflow state/context
+Day 5  ⏳ Agent-to-agent communication
+Day 6  ⏳ Dynamic task delegation
+Day 7  ⏳ Sequential multi-agent workflow
+Day 8  ⏳ Parallel agent execution
+Day 9  ⏳ Conditional routing
+Day 10 ⏳ Re-planning + failure/recovery
+Day 11 ⏳ Multi-source reasoning
+Day 12 ⏳ Verification + contradiction
+Day 13 ⏳ HITL + approval + audit
+Day 14 ⏳ Full dynamic multi-agent demo + hardening
+```
+
+---
+
+## Final Day 4 State
+
+The architecture has evolved from:
+
+```text
+Supervisor
+   ↓
+Specialist
+   ↓
+Result
+```
+
+to:
+
+```text
+              WorkflowContext
+                    │
+                    ↓
+                Supervisor
+                    ↓
+                Specialist
+                    ↓
+             SpecialistResult
+                    ↓
+          Update WorkflowContext
+                    ↓
+                Supervisor
+                    ↓
+                Next Agent
+```
