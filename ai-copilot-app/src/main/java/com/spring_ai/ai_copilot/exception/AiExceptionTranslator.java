@@ -176,6 +176,18 @@ public class AiExceptionTranslator {
             );
         }
 
+        AiDomainException domainException =
+                findCause(exception, AiDomainException.class);
+
+        if (domainException != null) {
+            return new AiProviderException(
+                    domainException.getStatus(),
+                    domainException.getErrorCode(),
+                    domainException.getMessage(),
+                    exception
+            );
+        }
+
         /*
          * Check known provider-specific exceptions.
          */
@@ -243,6 +255,22 @@ public class AiExceptionTranslator {
                 if (mapping.matches(current)) {
                     return mapping;
                 }
+            }
+        }
+
+        return null;
+    }
+
+    private <T extends Throwable> T findCause(
+            Throwable throwable,
+            Class<T> targetType) {
+
+        for (Throwable current = throwable;
+             current != null;
+             current = current.getCause()) {
+
+            if (targetType.isInstance(current)) {
+                return targetType.cast(current);
             }
         }
 
