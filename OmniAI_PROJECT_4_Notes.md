@@ -1149,3 +1149,364 @@ to:
                     ↓
                 Next Agent
 ```
+
+# OmniAI --- P4 Day 5 README
+
+## Agent-to-Agent Communication
+------------------------------------------------------------------------
+
+## 1. Objective
+
+Day 5 focused on implementing and proving **Agent-to-Agent
+Communication** inside the OmniAI multi-agent workflow.
+
+The goal was to make the output of one specialist useful to another
+specialist without creating direct coupling between agents.
+
+``` text
+Agent A
+   ↓
+SpecialistResult
+   ↓
+WorkflowContext
+   ↓
+Supervisor
+   ↓
+Next Task / Agent
+   ↓
+Agent B
+```
+
+Agents do not directly call each other.
+
+------------------------------------------------------------------------
+
+## 2. Core Concept
+
+The communication mechanism is the shared workflow state.
+
+A specialist executes a delegated task and produces a
+`SpecialistResult`.
+
+That result is added to:
+
+``` text
+WorkflowContext.previousResults
+```
+
+The Supervisor receives the updated context and uses previous results to
+decide what should happen next.
+
+The next specialist also receives previous results through its
+`SpecialistRequest`.
+
+This keeps specialists loosely coupled and allows the Supervisor to
+coordinate the workflow.
+
+------------------------------------------------------------------------
+
+## 3. Current Workflow
+
+``` text
+User Request
+      ↓
+Supervisor
+      ↓
+Delegate Task
+      ↓
+Specialist A
+      ↓
+SpecialistResult A
+      ↓
+WorkflowContext
+      ↓
+Supervisor
+      ↓
+Delegate Next Task
+      ↓
+Specialist B
+      ↓
+SpecialistResult B
+      ↓
+WorkflowContext
+      ↓
+Supervisor
+      ↓
+FINISH
+```
+
+------------------------------------------------------------------------
+
+## 4. Shared Workflow Context
+
+The workflow context contains the shared state used during
+orchestration.
+
+Important fields:
+
+``` text
+originalRequest
+conversationId
+previousResults
+currentTask
+workflowStatus
+```
+
+`previousResults` is the main communication mechanism between specialist
+executions.
+
+Example:
+
+``` text
+previousResults = [
+    KNOWLEDGE result,
+    DATA result
+]
+```
+
+------------------------------------------------------------------------
+
+## 5. Specialist Input
+
+The Knowledge Specialist receives:
+
+``` text
+Original User Request
+Current Delegated Task
+Previous Specialist Results
+```
+
+The specialist is explicitly instructed to execute **only the current
+delegated task** and use previous results when relevant.
+
+------------------------------------------------------------------------
+
+## 6. Supervisor Responsibility
+
+The Supervisor receives:
+
+``` text
+Original User Request
++
+Previous Specialist Results
+```
+
+It decides the next action based on the current workflow state.
+
+The important Day 5 behavior is:
+
+``` text
+Result from Agent A
+        ↓
+Supervisor observes result
+        ↓
+Supervisor decides next task
+        ↓
+Agent B executes using previous result
+```
+
+------------------------------------------------------------------------
+
+## 7. Day 5 Test
+
+The workflow was tested with a refund-related request requiring multiple
+specialists:
+
+``` text
+Locate refund policy and extract key terms and then check my
+purchase date from db to identify if I am eligible for refund or not.
+```
+
+For testing, the Data Agent currently returns a hardcoded purchase date:
+
+``` text
+26-Aug-2026
+```
+
+This is temporary test data and is not the final database
+implementation.
+
+------------------------------------------------------------------------
+
+## 8. Actual Specialist Results
+
+### Knowledge Specialist
+
+``` text
+Specialist Type:
+KNOWLEDGE
+
+Status:
+SUCCESS
+
+Result:
+The refund policy allows customers to request a refund
+within 45 days of purchase.
+```
+
+### Data Specialist
+
+``` json
+{
+  "specialistsType": "DATA",
+  "status": "success",
+  "result": "26-Aug-2026",
+  "sources": null
+}
+```
+
+Both results were added to the shared workflow context.
+
+------------------------------------------------------------------------
+
+## 9. Proof of Agent-to-Agent Communication
+
+The resulting workflow context contained:
+
+``` text
+previousResults = [
+    KNOWLEDGE → Refund window = 45 days,
+    DATA      → Purchase date = 26-Aug-2026
+]
+```
+
+The Supervisor was able to see the result from the Knowledge Specialist
+before delegating the next task to the Data Specialist.
+
+This proves the communication pattern:
+
+``` text
+Knowledge Agent
+      ↓
+Knowledge Result
+      ↓
+Shared Workflow Context
+      ↓
+Supervisor
+      ↓
+Data Agent
+      ↓
+Data Result
+      ↓
+Shared Workflow Context
+```
+
+------------------------------------------------------------------------
+
+## 10. Current Limitation
+
+The current orchestrator returns the last specialist result when the
+Supervisor decides `FINISH`.
+
+Therefore, the current API response can be:
+
+``` json
+{
+  "specialistsType": "DATA",
+  "status": "success",
+  "result": "26-Aug-2026",
+  "sources": null
+}
+```
+
+This is expected with the current implementation.
+
+It does **not** yet represent the final synthesized user-facing answer.
+
+Later this can become:
+
+``` text
+Knowledge Result
++
+Data Result
+      ↓
+Final Response Generation
+      ↓
+User-facing answer
+```
+
+This is intentionally outside Day 5 scope.
+
+------------------------------------------------------------------------
+
+## 11. Temporary Test Data
+
+The Data Agent currently returns:
+
+``` text
+26-Aug-2026
+```
+
+as hardcoded test data.
+
+Purpose:
+
+-   Validate multi-specialist execution
+-   Validate shared context
+-   Validate Supervisor decision-making
+-   Validate result propagation
+
+Future implementation will replace this with actual data retrieval.
+
+------------------------------------------------------------------------
+
+## 12. Day 5 Completion Criteria
+
+Requirement                                         Status
+  --------------------------------------------------- ----------
+Multiple specialists participate in one workflow    ✅
+Specialist result stored in shared context          ✅
+Supervisor receives previous results                ✅
+Supervisor decides next specialist/task             ✅
+Next specialist receives previous results           ✅
+Agent-to-agent communication through shared state   ✅
+Direct specialist-to-specialist coupling avoided    ✅
+Multi-source result combination demonstrated        ✅
+Test completed successfully                         ✅
+Final response synthesis                            Deferred
+
+------------------------------------------------------------------------
+
+## 13. Final Architecture
+
+``` text
+                    User Request
+                         ↓
+                    Supervisor
+                         ↓
+                  Knowledge Agent
+                         ↓
+                  Knowledge Result
+                         ↓
+                 Workflow Context
+                         ↓
+                    Supervisor
+                         ↓
+                     Data Agent
+                         ↓
+                    Data Result
+                         ↓
+                 Workflow Context
+                         ↓
+                    Supervisor
+                         ↓
+                      FINISH
+```
+
+------------------------------------------------------------------------
+
+# Day 5 Final Status
+
+**P4 Day 5 --- Agent-to-Agent Communication: COMPLETE ✅**
+
+The core communication pattern is implemented:
+
+> **Specialist Result → Shared Workflow Context → Supervisor → Next
+> Specialist**
+
+The temporary hardcoded Data Agent is sufficient for this day's
+architectural validation.
+
+### Status
+
+**Day 5 --- COMPLETE ✅**

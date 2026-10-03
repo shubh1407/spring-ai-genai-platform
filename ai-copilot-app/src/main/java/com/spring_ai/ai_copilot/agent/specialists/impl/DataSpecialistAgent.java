@@ -19,7 +19,7 @@ public class DataSpecialistAgent implements Specialist {
     @Override
     public SpecialistResult execute(SpecialistRequest chatRequest,String conversationId) {
         log.info("Data Specialists agent is called for conversation id {},task {}, tenantId {}",chatRequest.conversationId(),chatRequest.originalMessage(),chatRequest.tenantId());
-        return null;
+        return new SpecialistResult(SpecialistsType.DATA,"success","26-Aug-2026",null);
     }
 
     @Override

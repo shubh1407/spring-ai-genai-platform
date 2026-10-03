@@ -16,6 +16,7 @@ import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 import static com.spring_ai.ai_copilot.constant.PromptsConstants.AGENT_SYSTEM_PROMPT;
@@ -89,7 +90,7 @@ public class AgentService {
 
             String prompt = promptTemplate.render(Map.of("message", chatRequest.getOriginalRequest()
                     ,"previousResults",
-                    chatRequest.getPreviousResults().stream().map(result -> """
+                    chatRequest.getPreviousResults().stream().filter(Objects::nonNull).map(result -> """
                 Specialist: %s
                 Status: %s
                 Result: %s

@@ -19,6 +19,8 @@ import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 import static com.spring_ai.ai_copilot.constant.PromptsConstants.KNOWLEDGE_SPECIALIST_SYSTEM_PROMPT;
 
@@ -50,15 +52,39 @@ public class KnowledgeSpecialists implements Specialist {
         try {
             PromptTemplate promptTemplate = PromptTemplate.builder()
                     .template("""
-                            You are a helpful AI assistant.
-                            Answer the user's question clearly and concisely.
-                             
-                            User message:
+                            You are executing a specific task delegated by the Supervisor.
+                            
+                            Original User Request:
                             {message}
+           
+                            Current Delegated Task:
+                            {task}
+           
+                            Previous Specialist Results:
+                            {previousResults}
+           
+                            Execute ONLY the current delegated task.
+           
+                            Use previous specialist results when they are relevant to the current task.
+                            Do not repeat work that has already been completed.
+                            Do not attempt unrelated parts of the original user request.
+                            Return the result required for the current delegated task.
                             """)
                     .build();
 
-            String prompt = promptTemplate.render(Map.of("message", chatRequest.originalMessage()));
+            String prompt = promptTemplate.render(Map.of("message", chatRequest.originalMessage(),"task",chatRequest.task(),"previousResults",
+                    chatRequest.context().getPreviousResults().stream().filter(Objects::nonNull).map(result -> """
+                Specialist: %s
+                Status: %s
+                Result: %s
+                Sources: %s
+                """.formatted(
+                                    result.specialistsType(),
+                                    result.status(),
+                                    result.result(),
+                                    result.sources()
+                            ))
+                            .collect(Collectors.joining("\n\n"))));
             SpecialistResult response = client.getChatResponseWithToolCall(
                     KNOWLEDGE_SPECIALIST_SYSTEM_PROMPT,
                     prompt,
