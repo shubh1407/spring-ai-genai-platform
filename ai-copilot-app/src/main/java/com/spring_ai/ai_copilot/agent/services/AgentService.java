@@ -1,8 +1,6 @@
 package com.spring_ai.ai_copilot.agent.services;
 
-import com.spring_ai.ai_copilot.agent.dto.SpecialistRequest;
-import com.spring_ai.ai_copilot.agent.dto.SpecialistResult;
-import com.spring_ai.ai_copilot.agent.dto.SupervisorContext;
+import com.spring_ai.ai_copilot.agent.dto.WorkflowContext;
 import com.spring_ai.ai_copilot.agent.dto.SupervisorDecision;
 import com.spring_ai.ai_copilot.agent.tools.KnowledgeSearchTool;
 import com.spring_ai.ai_copilot.agent.tools.PlannerTool;
@@ -74,7 +72,7 @@ public class AgentService {
     }
 
 
-    public SupervisorDecision getSupervisorResponse(SupervisorContext chatRequest) {
+    public SupervisorDecision getSupervisorResponse(WorkflowContext chatRequest) {
         log.info("service.agent.response.started operation=get.Supervisor.response");
         try {
             PromptTemplate promptTemplate = PromptTemplate.builder()
@@ -84,13 +82,14 @@ public class AgentService {
 
                             User message:
                             {message}
+                            Previous Specialist Results:
                             {previousResults}
                             """)
                     .build();
 
-            String prompt = promptTemplate.render(Map.of("message", chatRequest.originalRequest()
+            String prompt = promptTemplate.render(Map.of("message", chatRequest.getOriginalRequest()
                     ,"previousResults",
-                    chatRequest.previousResults().stream().map(result -> """
+                    chatRequest.getPreviousResults().stream().map(result -> """
                 Specialist: %s
                 Status: %s
                 Result: %s
@@ -102,7 +101,7 @@ public class AgentService {
                             result.sources()
                     ))
                     .collect(Collectors.joining("\n\n"))));
-            SupervisorDecision response = client.getChatResponseWithToolCall(SUPERVISOR_SYSTEM_PROMPT,prompt,chatRequest.conversationId() , SupervisorDecision.class);
+            SupervisorDecision response = client.getChatResponseWithToolCall(SUPERVISOR_SYSTEM_PROMPT,prompt,chatRequest.getConversationId() , SupervisorDecision.class);
             log.info("service.agent.response.completed operation=get.Supervisor.response status=success");
             return response;
             //return specialistService.getSpecialist(response,chatRequest.conversationId());

@@ -3,6 +3,7 @@ package com.spring_ai.ai_copilot.agent.services;
 import com.spring_ai.ai_copilot.agent.dto.SpecialistRequest;
 import com.spring_ai.ai_copilot.agent.dto.SpecialistResult;
 import com.spring_ai.ai_copilot.agent.dto.SupervisorDecision;
+import com.spring_ai.ai_copilot.agent.dto.WorkflowContext;
 import com.spring_ai.ai_copilot.agent.specialists.Specialist;
 import com.spring_ai.ai_copilot.agent.specialists.SpecialistResolver;
 import com.spring_ai.ai_copilot.agent.tools.TenantContext;
@@ -24,17 +25,18 @@ public class SpecialistService {
         this.tenantContext = tenantContext;
     }
 
-    public SpecialistResult getSpecialist(SupervisorDecision supervisorDecision, String conversationId) {
+    public SpecialistResult getSpecialist(SupervisorDecision supervisorDecision, WorkflowContext workflowContext) {
         SpecialistRequest specialistRequest = new SpecialistRequest(
-                conversationId,
+                workflowContext.getConversationId(),
                 tenantContext.getTenantId(),
                 supervisorDecision.task(),
-                supervisorDecision.originalMessage()
+                workflowContext.getOriginalRequest(),
+                workflowContext
         );
 
         try {
             Specialist specialist = specialistResolver.getSpecialistAgent(supervisorDecision.specialistsType());
-            return specialist.execute(specialistRequest, conversationId);
+            return specialist.execute(specialistRequest, workflowContext.getConversationId());
         } catch (AiDomainException | AiProviderException | ToolValidationException | UnsupportedDocumentTypeException e) {
             throw e;
         } catch (RuntimeException e) {
