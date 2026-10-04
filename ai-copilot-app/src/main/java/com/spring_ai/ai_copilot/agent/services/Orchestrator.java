@@ -18,18 +18,43 @@ public class Orchestrator {
         this.agentService = agentService;
     }
 
-    public SpecialistResult orchestrate(AgentChatRequest request){
+    public OrchestratorResponse orchestrate(AgentChatRequest request){
 
         WorkflowContext context = new WorkflowContext(request.message(),request.conversationId(), new ArrayList<>(),null, WorkflowStatus.IN_PROGRESS);
         SupervisorDecision supervisorDecision = agentService.getSupervisorResponse(context);
         SpecialistResult specialistResult;
-        while(supervisorDecision!=null && !supervisorDecision.action().equals(Action.FINISH)){
+        int maxIterations = 10;
+        int iterations = 0;
+        while(supervisorDecision!=null
+                && supervisorDecision.action().equals(Action.DELEGATE)
+                && iterations < maxIterations){
             context.setCurrentTask(supervisorDecision.task());
             specialistResult=specialistService.getSpecialist(supervisorDecision,context);
             context.getPreviousResults().add(specialistResult);
             supervisorDecision = agentService.getSupervisorResponse(context);
+            iterations++;
+        }
+        if(supervisorDecision!=null && supervisorDecision.action().equals(Action.ASK_USER)){
+            context.setWorkflowStatus(WorkflowStatus.WAITING_FOR_USER_INPUT);
+            return OrchestratorResponse.waitingForUser(
+                    supervisorDecision.task()
+            );
+        }
+        if(supervisorDecision!=null && supervisorDecision.action().equals(Action.DELEGATE)){
+            context.setWorkflowStatus(WorkflowStatus.FAILED);
+            return OrchestratorResponse.failed(
+                    "Maximum workflow iterations exceeded"
+            );
         }
         context.setWorkflowStatus(WorkflowStatus.COMPLETED);
-        return context.getPreviousResults().getLast();
+        assert supervisorDecision != null;
+        return OrchestratorResponse.completed(
+                new SpecialistResult(
+                        SpecialistsType.REPORT,
+                        "SUCCESS",
+                        supervisorDecision.finalResponse(),
+                        null
+                )
+        );
     }
 }

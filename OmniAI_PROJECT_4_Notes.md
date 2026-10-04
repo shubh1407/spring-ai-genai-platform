@@ -1510,3 +1510,631 @@ architectural validation.
 ### Status
 
 **Day 5 --- COMPLETE ✅**
+
+# OmniAI — P4 Day 6
+## Dynamic Task Delegation
+
+### Objective
+
+Day 6 focused on **dynamic task delegation**.
+
+The Supervisor must determine the smallest useful next task and delegate it to the specialist whose responsibility matches that task.
+
+The system must not hardcode a fixed sequence of specialists.
+
+---
+
+## 1. Core Concept
+
+The workflow is:
+
+```text
+User Request
+    ↓
+Supervisor
+    ↓
+Determine missing/required information
+    ↓
+Delegate ONE atomic task
+    ↓
+Specialist
+    ↓
+SpecialistResult
+    ↓
+WorkflowContext
+    ↓
+Supervisor
+```
+
+The Supervisor repeatedly evaluates the current workflow state and decides what should happen next.
+
+---
+
+## 2. Dynamic Delegation Rules
+
+A delegated task must:
+
+- Be one focused unit of work.
+- Belong to one specialist.
+- Use only information actually available.
+- Avoid repeating completed work.
+- Avoid speculative or unnecessary data retrieval.
+- Preserve user-provided identifiers exactly.
+- Respect dependencies between tasks.
+
+The Supervisor should always ask:
+
+> What is the next required action based on the current workflow state?
+
+---
+
+## 3. Identifier Preservation
+
+A major Day 6 issue was the Supervisor incorrectly treating:
+
+```text
+customerId = 1
+```
+
+as:
+
+```text
+orderId = 1
+```
+
+This was explicitly prevented.
+
+Different identifiers represent different entities:
+
+```text
+customerId ≠ orderId
+accountId ≠ customerId
+purchaseDate ≠ orderId
+productId ≠ orderId
+```
+
+If the user provides:
+
+```text
+customerId = 1
+```
+
+the Supervisor must preserve it as `customerId = 1`.
+
+It must never fabricate an order ID.
+
+---
+
+## 4. Missing Information and ASK_USER
+
+Day 6 introduced:
+
+```text
+DELEGATE
+ASK_USER
+FINISH
+```
+
+`ASK_USER` is used when required information cannot be retrieved by an available specialist and must come from the user.
+
+Example:
+
+```text
+customerId = 1
+refund policy = available
+orderId = required
+orderId cannot be resolved by available tools
+```
+
+Correct:
+
+```text
+ASK_USER
+```
+
+Incorrect:
+
+```text
+DELEGATE → REPORT
+```
+
+The Supervisor itself asks the user for the missing information.
+
+---
+
+## 5. Workflow Response
+
+An `OrchestratorResponse` was introduced to represent cases where the workflow is not completed and requires user input.
+
+Conceptually:
+
+```text
+WAITING_FOR_USER_INPUT
+    ↓
+questionToUser
+
+COMPLETED
+    ↓
+result
+
+FAILED
+    ↓
+error/message
+```
+
+When `ASK_USER` occurs, the previous specialist result must not be returned as the final response.
+
+---
+
+## 6. DATA Specialist Direction
+
+The DATA specialist is responsible for structured/business data retrieval.
+
+A business operation such as:
+
+```text
+getPurchaseDetails
+```
+
+is preferred over unrelated individual lookups when the information logically belongs to one purchase record.
+
+Possible purchase details include:
+
+```text
+purchaseDate
+orderId
+customerType
+```
+
+The DATA specialist should:
+
+- Use only available data tools.
+- Retrieve only the fields required by the current task.
+- Not perform knowledge/document retrieval.
+- Not perform routing/delegation.
+- Not fabricate data.
+- Return a structured `SpecialistResult`.
+
+---
+
+## 7. Important Prompt Rules Added
+
+The Supervisor prompt was strengthened with:
+
+### No Duplication
+
+Do not retrieve information that has already been successfully obtained.
+
+### Missing Data vs Retrievable Data
+
+If a specialist/tool can retrieve missing information:
+
+```text
+DELEGATE
+```
+
+If it cannot be retrieved and must come from the user:
+
+```text
+ASK_USER
+```
+
+### No Unnecessary Data Retrieval
+
+Do not request fields merely because they might be useful.
+
+For example, if refund eligibility requires:
+
+```text
+purchaseDate
+customerType
+refund policy
+```
+
+do not automatically request:
+
+```text
+product
+purchaseAmount
+```
+
+unless the workflow or authoritative policy requires them.
+
+---
+
+## 8. Day 6 Demonstration
+
+Example request:
+
+```text
+Check my refund eligibility for customer id 1
+```
+
+The Supervisor must preserve:
+
+```text
+customerId = 1
+```
+
+and determine whether the required purchase information can be retrieved by DATA.
+
+A valid dynamic delegation can therefore be:
+
+```text
+Supervisor
+    ↓
+DATA
+    ↓
+Purchase details
+    ↓
+Supervisor
+```
+
+The next task is determined from the accumulated workflow state rather than from a fixed pipeline.
+
+---
+
+## 9. Day 6 Completion
+
+### Completed
+
+- Dynamic task delegation
+- Atomic specialist tasks
+- Identifier preservation
+- Missing-data handling
+- ASK_USER action
+- DATA specialist boundary
+- No unnecessary data retrieval
+- No duplicate specialist work
+- Controlled Supervisor autonomy
+
+### Key Day 6 Principle
+
+> **The Supervisor decides what the next useful task is based on the current workflow state.**
+
+---
+
+# End of Day 6
+
+
+---
+
+# OmniAI — P4 Day 7
+## Sequential Multi-Agent Workflow
+
+### Objective
+
+Day 7 focused on **sequential multi-agent execution through task dependency**.
+
+The goal was not to create a hardcoded sequence.
+
+The goal was to demonstrate:
+
+```text
+Agent A
+   ↓
+Result A
+   ↓
+WorkflowContext
+   ↓
+Supervisor
+   ↓
+Agent B
+```
+
+where Agent B's task can depend on the result produced by Agent A.
+
+---
+
+## 1. Core Concept
+
+Sequential multi-agent workflow means:
+
+> One specialist completes its work, its result is added to the shared workflow context, the Supervisor evaluates the updated state, and then decides the next required specialist action.
+
+The Supervisor remains dynamic.
+
+The order of specialists is not hardcoded.
+
+---
+
+## 2. Day 7 Dependency Example
+
+Test request:
+
+```text
+Find the customer type for customer id 1 and then find the
+refund policy applicable to that customer type.
+```
+
+The dependency is:
+
+```text
+Customer Type
+     ↓
+Refund Policy applicable to that Customer Type
+```
+
+Therefore:
+
+```text
+DATA
+  ↓
+customerType = Standard
+  ↓
+Supervisor
+  ↓
+KNOWLEDGE
+  ↓
+Retrieve the refund policy applicable to Standard customers
+```
+
+The KNOWLEDGE task uses the result produced by DATA.
+
+---
+
+## 3. Actual Successful Workflow State
+
+After DATA execution, the workflow context was:
+
+```text
+WorkflowContext(
+    originalRequest =
+        "Find the customer type for customer id 1 and then find the
+         refund policy applicable to that customer type.",
+
+    conversationId = "hybrid-test-4",
+
+    previousResults = [
+        SpecialistResult[
+            specialistsType = DATA,
+            status = SUCCESS,
+            result = "Standard",
+            sources = [...]
+        ]
+    ],
+
+    currentTask =
+        "Retrieve the refund policy applicable to customer type Standard.",
+
+    workflowStatus = IN_PROGRESS
+)
+```
+
+The Supervisor then produced:
+
+```text
+SupervisorDecision[
+    action = DELEGATE,
+    specialistsType = KNOWLEDGE,
+    task = "Retrieve the refund policy applicable to customer type Standard.",
+    reason =
+        "The customer type has been retrieved (Standard). The next step
+         is to obtain the refund policy that applies to this customer type.",
+    finalResponse = null
+]
+```
+
+This was the key Day 7 demonstration.
+
+---
+
+## 4. What Was Demonstrated
+
+The sequence was:
+
+```text
+User Request
+     ↓
+Supervisor
+     ↓
+DATA
+     ↓
+customerType = Standard
+     ↓
+WorkflowContext
+     ↓
+Supervisor
+     ↓
+KNOWLEDGE
+     ↓
+Standard-specific refund policy
+```
+
+The important transition was:
+
+```text
+DATA result
+    ↓
+customerType = Standard
+    ↓
+Supervisor
+    ↓
+KNOWLEDGE task uses Standard
+```
+
+This proves that a previous specialist's output can become the dependency/input for the next specialist task.
+
+---
+
+## 5. Sequential Does NOT Mean Fixed Ordering
+
+The system does not require:
+
+```text
+KNOWLEDGE → DATA
+```
+
+for every request.
+
+Another valid workflow may be:
+
+```text
+DATA → KNOWLEDGE
+```
+
+or:
+
+```text
+KNOWLEDGE → DATA
+```
+
+depending on the dependency in the request.
+
+The Supervisor determines the sequence from:
+
+```text
+Original User Request
++
+User-provided information
++
+Previous Specialist Results
++
+Current Workflow State
+```
+
+---
+
+## 6. No Hardcoded Pipeline
+
+The implementation does not introduce:
+
+```java
+knowledgeAgent();
+dataAgent();
+```
+
+or a fixed sequence.
+
+The existing dynamic loop is retained:
+
+```text
+Supervisor
+    ↓
+Specialist
+    ↓
+SpecialistResult
+    ↓
+WorkflowContext
+    ↓
+Supervisor
+```
+
+This allows the Supervisor to choose the next specialist dynamically.
+
+---
+
+## 7. Final Response Support
+
+The Supervisor decision model was extended with:
+
+```text
+finalResponse
+```
+
+Decision structure:
+
+```json
+{
+  "action": "DELEGATE | ASK_USER | FINISH",
+  "specialistsType": "string | null",
+  "task": "string | null",
+  "questionToUser": "string | null",
+  "finalResponse": "string | null",
+  "reason": "string"
+}
+```
+
+For `FINISH`:
+
+```text
+specialistsType = null
+task = null
+questionToUser = null
+finalResponse = final user-facing answer
+reason = explanation for completion
+```
+
+`task = null` during `FINISH` is correct because there is no next specialist task.
+
+---
+
+## 8. Day 7 Scope
+
+### Completed
+
+- Sequential multi-agent concept
+- Task dependency
+- Specialist result flowing through shared context
+- Supervisor evaluating updated context
+- Next specialist task using a previous result
+- Dynamic sequence without hardcoded agent ordering
+- Final response support through `finalResponse`
+
+### Not Part of Day 7
+
+- Parallel agent execution
+- Concurrent specialist execution
+- Conditional routing
+- Re-planning and recovery
+- Multi-source verification
+- Contradiction detection
+- Human approval workflow
+
+---
+
+## 9. Final Day 7 Architecture
+
+```text
+                    User
+                     ↓
+                Supervisor
+                     ↓
+                 DATA Agent
+                     ↓
+              customerType=Standard
+                     ↓
+              WorkflowContext
+                     ↓
+                Supervisor
+                     ↓
+        "Policy applicable to Standard"
+                     ↓
+              KNOWLEDGE Agent
+                     ↓
+                  Result
+                     ↓
+                Supervisor
+                     ↓
+                  FINISH
+                     ↓
+              finalResponse
+```
+
+---
+
+## 10. Day 7 Completion
+
+**STATUS: COMPLETE ✅**
+
+The system demonstrated:
+
+```text
+Agent A
+   ↓
+Result A
+   ↓
+Shared Context
+   ↓
+Supervisor
+   ↓
+Agent B
+```
+
+without hardcoding the agent order.
+
+### Key Day 7 Principle
+
+> **A previous specialist's result can become the dependency/input for the next specialist task.**
+
+---

@@ -94,7 +94,7 @@ public class KnowledgeSpecialists implements Specialist {
                     plannerTool
             );
             validateSpecialistResult(response);
-            log.info("service.agent.response.completed operation=get.knowledge.Search status=success");
+            log.info("service.agent.response.completed operation=get.knowledge.specialist status=success");
             return response;
         } catch (AiDomainException | AiProviderException | ToolValidationException | UnsupportedDocumentTypeException e) {
             throw e;

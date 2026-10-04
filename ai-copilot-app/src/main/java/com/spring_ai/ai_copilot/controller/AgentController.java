@@ -1,5 +1,6 @@
 package com.spring_ai.ai_copilot.controller;
 
+import com.spring_ai.ai_copilot.agent.dto.OrchestratorResponse;
 import com.spring_ai.ai_copilot.agent.dto.SpecialistRequest;
 import com.spring_ai.ai_copilot.agent.dto.SpecialistResult;
 import com.spring_ai.ai_copilot.agent.dto.SupervisorDecision;
@@ -61,11 +62,11 @@ public class AgentController {
     }
 
     @PostMapping("/supervisor/route")
-    public ResponseEntity<SpecialistResult> supervisorRoute(@RequestBody AgentChatRequest chatRequest) {
+    public ResponseEntity<OrchestratorResponse> supervisorRoute(@RequestBody AgentChatRequest chatRequest) {
         tenantContext.setTenantId(chatRequest.tenantId());
         log.info("controller.agent.request.started operation=agent.chat.request");
         try {
-            SpecialistResult response = orchestrator.orchestrate(chatRequest);
+            OrchestratorResponse response = orchestrator.orchestrate(chatRequest);
             log.info("controller.agent.request.completed operation=agent.chat.request status=success");
             return ResponseEntity.ok(response);
         } catch (Exception e) {
