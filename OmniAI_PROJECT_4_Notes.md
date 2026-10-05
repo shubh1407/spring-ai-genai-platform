@@ -2138,3 +2138,322 @@ without hardcoding the agent order.
 > **A previous specialist's result can become the dependency/input for the next specialist task.**
 
 ---
+
+# OmniAI — P4 Day 7
+## Sequential Multi-Agent Workflow
+
+## Objective
+Introduce parallel execution of independent specialist tasks while preserving the existing sequential workflow.
+
+```text
+Supervisor
+   ↓
+tasks[]
+   ├── DATA ───────→ Result
+   └── KNOWLEDGE ──→ Result
+            ↓
+      Collect Results
+            ↓
+     WorkflowContext
+            ↓
+        Supervisor
+```
+
+## Core Design
+
+```text
+Supervisor = WHAT should execute?
+Orchestrator = HOW should it execute?
+Specialist = Execute assigned task
+```
+
+The Supervisor identifies currently executable tasks and can return multiple independent tasks. The Orchestrator executes them concurrently and collects their results.
+
+Parallelism is based on **task dependency**, not specialist type.
+
+## Implementation
+
+Java 21 virtual threads and `CompletableFuture` are used for concurrent specialist execution.
+
+```text
+tasks
+ ↓
+CompletableFuture per task
+ ↓
+execute concurrently
+ ↓
+join all
+ ↓
+List<SpecialistResult>
+```
+
+Parallel specialists should not directly mutate shared workflow results. Results are collected first and then added to `WorkflowContext`.
+
+```text
+Specialist A → Result A
+Specialist B → Result B
+                  ↓
+             collect all
+                  ↓
+      context.previousResults.addAll(...)
+```
+
+## Sequential vs Parallel
+
+### Sequential
+Used when B depends on A:
+
+```text
+DATA
+ ↓
+customerType = Standard
+ ↓
+Supervisor
+ ↓
+KNOWLEDGE
+ ↓
+policy for Standard
+```
+
+### Parallel
+Used when tasks are independent:
+
+```text
+        ┌── DATA ─────→ Result
+Supervisor
+        └── KNOWLEDGE → Result
+```
+
+## Tenant Context / Async Execution
+
+Day 8 initially exposed a `ScopeNotActiveException` because request-scoped `TenantContext` was accessed from a virtual thread.
+
+```text
+HTTP Request Thread
+      ↓
+Request Scope active
+
+Virtual Thread
+      ↓
+Request Scope unavailable
+```
+
+Tenant information was therefore propagated explicitly:
+
+```text
+Request
+  ↓
+TenantContext
+  ↓
+WorkflowContext / ToolParam
+  ↓
+Parallel Specialist
+  ↓
+KnowledgeTool
+```
+
+`KnowledgeTool` receives `tenantId` through its tool parameters instead of reading the request-scoped context from the asynchronous thread.
+
+## Testing
+
+### Test 1 — Parallel DATA + KNOWLEDGE
+
+Input:
+
+```text
+Find the refund policy and retrieve purchase details for customer id 1.
+```
+
+Expected:
+
+```text
+DELEGATE
+ ├── KNOWLEDGE → Find the refund policy
+ └── DATA → Retrieve purchase details for customer id 1
+```
+
+**PASS ✅**
+
+Both specialists executed concurrently and their results were collected.
+
+### Test 2 — Sequential Dependency
+
+Input:
+
+```text
+Find the customer type for customer id 1 and then find the refund policy applicable to that customer type.
+```
+
+Expected:
+
+```text
+DATA → customer type
+       ↓
+Supervisor
+       ↓
+KNOWLEDGE → applicable policy
+```
+
+**PASS ✅**
+
+Day 7 sequential dependency continues to work.
+
+### Test 3 — ASK_USER
+
+Input:
+
+```text
+Check my refund eligibility.
+```
+
+Result:
+
+```json
+{
+  "status": "WAITING_FOR_USER_INPUT",
+  "questionToUser": "Please provide your order ID so I can retrieve your purchase details and check your refund eligibility.",
+  "result": null
+}
+```
+
+**PASS ✅**
+
+Workflow correctly enters `WAITING_FOR_USER_INPUT`.
+
+Minor prompt refinement: when both identifiers are valid, the question can request either customer ID or order ID.
+
+### Test 4 — Existing Identifier Preservation
+
+Input:
+
+```text
+Check my refund eligibility for customer id 1.
+```
+
+Expected:
+
+```text
+DATA → Retrieve purchase details for customer id 1
+```
+
+The Supervisor must not ask for the customer ID again and must not interpret `customerId=1` as `orderId=1`.
+
+**PASS ✅**
+
+### Test 5 — Parallel Results → FINISH
+
+Input:
+
+```text
+Find the customer type and the refund policy.
+```
+
+Expected:
+
+```text
+Supervisor
+   ↓
+DATA + KNOWLEDGE
+   ↓
+Parallel execution
+   ↓
+2 results
+   ↓
+Supervisor
+   ↓
+FINISH
+```
+
+**PASS ✅**
+
+### Test 6 — Single Specialist Regression
+
+Input:
+
+```text
+Find the refund policy.
+```
+
+Expected:
+
+```text
+Supervisor
+   ↓
+KNOWLEDGE
+   ↓
+Result
+   ↓
+Supervisor
+   ↓
+FINISH
+```
+
+**PASS ✅**
+
+The normal single-specialist flow remains working after the parallel implementation.
+
+## Multi-Source Conflict Observed
+
+Refund-policy testing exposed conflicting source information:
+
+```text
+company.pdf
+→ Standard customers: 30 days
+
+company-policy.txt
+→ Standard customers: 45 days
+```
+
+This is intentionally **not solved in Day 8**.
+
+It belongs to later P4 work:
+
+```text
+Multi-source reasoning
+        ↓
+Conflicting sources
+        ↓
+Evidence verification
+        ↓
+Contradiction detection
+        ↓
+Confidence
+        ↓
+Revision / verified answer
+```
+
+## Completion Checklist
+
+- [x] Parallel multi-agent concept
+- [x] Supervisor can return multiple executable tasks
+- [x] Orchestrator executes tasks concurrently
+- [x] Java virtual threads
+- [x] CompletableFuture
+- [x] Parallel result collection
+- [x] WorkflowContext update after execution
+- [x] Sequential dependency regression
+- [x] Single-specialist regression
+- [x] ASK_USER flow
+- [x] Tenant ID propagation
+- [x] Parallel testing
+- [x] Regression testing
+
+## Final Status
+
+### ✅ P4 Day 8 — COMPLETE
+
+OmniAI now supports:
+
+```text
+Single Task
+    ↓
+Sequential Tasks
+    ↓
+Parallel Independent Tasks
+    ↓
+Collect Results
+    ↓
+Supervisor Re-evaluation
+    ↓
+FINISH / ASK_USER / DELEGATE
+```

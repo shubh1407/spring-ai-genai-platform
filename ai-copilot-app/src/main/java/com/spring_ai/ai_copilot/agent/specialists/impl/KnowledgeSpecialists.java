@@ -56,6 +56,9 @@ public class KnowledgeSpecialists implements Specialist {
                             
                             Original User Request:
                             {message}
+                            
+                            tenantId:
+                            {tenantId}
            
                             Current Delegated Task:
                             {task}
@@ -84,7 +87,7 @@ public class KnowledgeSpecialists implements Specialist {
                                     result.result(),
                                     result.sources()
                             ))
-                            .collect(Collectors.joining("\n\n"))));
+                            .collect(Collectors.joining("\n\n")),"tenantId",chatRequest.tenantId()));
             SpecialistResult response = client.getChatResponseWithToolCall(
                     KNOWLEDGE_SPECIALIST_SYSTEM_PROMPT,
                     prompt,

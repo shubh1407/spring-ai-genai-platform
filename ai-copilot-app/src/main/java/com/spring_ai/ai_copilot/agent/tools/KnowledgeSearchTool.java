@@ -22,16 +22,14 @@ public class KnowledgeSearchTool {
 
     private final CitationBuilder citationBuilder;
 
-    private final TenantContext tenantContext;
-
-    public KnowledgeSearchTool(RagRetrievalService ragRetrievalService, CitationBuilder citationBuilder, TenantContext tenantContext) {
+    public KnowledgeSearchTool(RagRetrievalService ragRetrievalService, CitationBuilder citationBuilder) {
         this.ragRetrievalService = ragRetrievalService;
         this.citationBuilder = citationBuilder;
-        this.tenantContext = tenantContext;
     }
 
     @Tool(name = "searchKnowledge", description = "Search the company's internal knowledge base for relevant policies, documentation, and business information.")
-    public ToolResponse searchKnowledge(@ToolParam(required = true, description = "The user's question or information to search for in the internal knowledge base.") String query) {
+    public ToolResponse searchKnowledge(@ToolParam(required = true, description = "The user's question or information to search for in the internal knowledge base.") String query,
+                                        @ToolParam(description = "Unique tenant ID used to scope the knowledge search to the correct tenant.") String tenantId) {
 
         if (query == null || query.isBlank()) {
             throw new ToolValidationException("Search query must not be blank");
@@ -41,7 +39,7 @@ public class KnowledgeSearchTool {
             throw new ToolValidationException("Search query is too long");
         }
 
-        List<Document> finalDocuments = ragRetrievalService.retrieveDocument(query, tenantContext.getTenantId());
+        List<Document> finalDocuments = ragRetrievalService.retrieveDocument(query, tenantId);
         List<Citation> citations = citationBuilder.extractSources(finalDocuments);
         return new ToolResponse(finalDocuments, citations);
     }

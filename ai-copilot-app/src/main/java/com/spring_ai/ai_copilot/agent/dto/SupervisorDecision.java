@@ -1,4 +1,6 @@
 package com.spring_ai.ai_copilot.agent.dto;
 
-public record SupervisorDecision(Action action,SpecialistsType specialistsType,String task,String reason,String originalMessage,String finalResponse) {
+import java.util.List;
+
+public record SupervisorDecision(Action action, List<SpecialistTask> tasks, String reason, String originalMessage, String finalResponse, String questionToUser) {
 }

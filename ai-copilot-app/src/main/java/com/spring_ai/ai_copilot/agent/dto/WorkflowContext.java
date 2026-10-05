@@ -12,6 +12,7 @@ public class WorkflowContext
     private String originalRequest;
     private String conversationId;
     private List<SpecialistResult> previousResults;
-    private String currentTask;
+    private List<String> currentTasks;
     private WorkflowStatus workflowStatus;
+    private String tenantId;
 }
