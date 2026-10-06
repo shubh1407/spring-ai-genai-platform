@@ -2457,3 +2457,482 @@ Supervisor Re-evaluation
     ↓
 FINISH / ASK_USER / DELEGATE
 ```
+### Day 9: Conditional Routing
+
+---
+
+## 1. Objective
+
+Day 9 focused on making **Conditional Routing** explicit in the Supervisor's decision-making.
+
+The existing OmniAI architecture was intentionally preserved.
+
+No new specialist, service, workflow context, execution engine, or routing component was introduced.
+
+The main change was to strengthen the Supervisor prompt so that it explicitly understands:
+
+```text
+Current Workflow State
+        ↓
+Relevant Condition
+        ↓
+Applicable Route
+        ↓
+Required Task
+        ↓
+Appropriate Specialist
+```
+
+---
+
+## 2. Important Observation
+
+Day 9 did **not** introduce a completely new runtime behavior from scratch.
+
+The existing Day 7 sequential workflow was already capable of producing the correct behavior:
+
+```text
+DATA
+ ↓
+customerType = Standard
+ ↓
+KNOWLEDGE
+ ↓
+Standard refund policy
+```
+
+Day 9 formalized this behavior as **conditional routing**.
+
+Therefore, the Day 9 test used a similar scenario to the existing Day 7 test, but the Supervisor prompt was strengthened to explicitly reason about:
+
+- the condition,
+- the applicable route,
+- and the resulting task.
+
+This distinction is important.
+
+Day 7 demonstrated:
+
+> A later task depends on the result of an earlier task.
+
+Day 9 formalized:
+
+> The result of the earlier task establishes a condition that determines which route should be executed next.
+
+---
+
+## 3. Concept
+
+### Condition
+
+A condition is a relevant fact or state that determines what should happen next.
+
+Example:
+
+```text
+customerType = STANDARD
+```
+
+### Route
+
+The applicable business path determined by the condition.
+
+Example:
+
+```text
+Standard Customer Refund Policy
+```
+
+### Task
+
+The concrete work required for that route.
+
+Example:
+
+```text
+Retrieve the refund policy applicable to Standard customers.
+```
+
+### Specialist
+
+The agent responsible for executing that task.
+
+Example:
+
+```text
+KNOWLEDGE
+```
+
+These are different concepts:
+
+```text
+Condition
+    ↓
+Route
+    ↓
+Task
+    ↓
+Specialist
+```
+
+---
+
+## 4. Day 9 Architecture
+
+No architectural change was required.
+
+The existing workflow remains:
+
+```text
+User Request
+    ↓
+Orchestrator
+    ↓
+Supervisor
+    ↓
+Specialist
+    ↓
+SpecialistResult
+    ↓
+WorkflowContext
+    ↓
+Supervisor
+    ↓
+Next Decision
+```
+
+Conditional routing is a Supervisor decision-making capability.
+
+The Orchestrator still decides **how** delegated tasks are executed.
+
+The Specialist still decides **how** to execute its assigned task.
+
+The Supervisor decides **what route/task should happen next**.
+
+---
+
+## 5. Conditional Routing Rules Added
+
+The Supervisor was explicitly instructed to:
+
+1. Inspect the current workflow state.
+2. Identify whether the next action depends on a condition.
+3. Identify the condition from available evidence.
+4. Determine the applicable route.
+5. Select the task belonging to that route.
+6. Select the appropriate specialist.
+7. Avoid executing mutually exclusive routes.
+8. Avoid inventing unsupported conditions.
+9. Reassess the workflow after receiving new results.
+
+---
+
+## 6. Example
+
+User request:
+
+```text
+Find the customer type for customer id 1 and then find
+the refund policy applicable to that customer type.
+```
+
+### Step 1
+
+Supervisor:
+
+```text
+DELEGATE → DATA
+```
+
+Task:
+
+```text
+Retrieve the customer type for customer id 1.
+```
+
+### Step 2
+
+DATA result:
+
+```text
+customerType = Standard
+```
+
+Now the condition is known:
+
+```text
+Condition:
+customerType = Standard
+```
+
+Applicable route:
+
+```text
+Standard Customer Refund Policy
+```
+
+### Step 3
+
+Supervisor:
+
+```text
+DELEGATE → KNOWLEDGE
+```
+
+Task:
+
+```text
+Retrieve the refund policy applicable to Standard customers.
+```
+
+### Step 4
+
+Knowledge result:
+
+```text
+Standard customers:
+refund allowed within 45 days of purchase.
+```
+
+### Step 5
+
+Supervisor:
+
+```text
+FINISH
+```
+
+---
+
+## 7. Actual Test Result
+
+### First Supervisor decision
+
+```text
+action = DELEGATE
+specialist = DATA
+task = Retrieve the customer type for customer id 1.
+```
+
+The Supervisor correctly recognized that customer type is required before selecting the applicable refund-policy route.
+
+### Second Supervisor decision
+
+After DATA returned:
+
+```text
+customerType = Standard
+```
+
+Supervisor selected:
+
+```text
+action = DELEGATE
+specialist = KNOWLEDGE
+task = Retrieve the refund policy applicable to Standard customers.
+```
+
+This demonstrates that the next route was selected from the actual specialist result.
+
+### Third Supervisor decision
+
+```text
+action = FINISH
+```
+
+Final response:
+
+```text
+The customer type for ID 1 is Standard.
+The applicable refund policy for Standard customers
+allows a refund within 45 days of purchase.
+```
+
+---
+
+## 8. What Day 9 Proved
+
+### Condition identification
+
+```text
+customerType = Standard
+```
+
+### Route selection
+
+```text
+Standard Customer Refund Policy
+```
+
+### Dynamic task selection
+
+```text
+Retrieve refund policy applicable to Standard customers.
+```
+
+### Correct specialist selection
+
+```text
+KNOWLEDGE
+```
+
+### Dependency preservation
+
+Customer type was retrieved before selecting the customer-type-specific policy.
+
+### No hardcoded Java routing
+
+No business-specific:
+
+```java
+if (customerType.equals(...))
+```
+
+routing was introduced.
+
+---
+
+## 9. Day 7 vs Day 9
+
+### Day 7 — Sequential Multi-Agent Workflow
+
+Focus:
+
+```text
+Task A
+ ↓
+Result A
+ ↓
+Task B
+```
+
+Question:
+
+> What task must happen after the prerequisite task?
+
+Example:
+
+```text
+Get customer type
+ ↓
+Get applicable policy
+```
+
+### Day 9 — Conditional Routing
+
+Focus:
+
+```text
+Result A
+ ↓
+Condition
+ ↓
+Applicable Route
+ ↓
+Task B
+```
+
+Question:
+
+> Which route should be selected based on the current state?
+
+Example:
+
+```text
+customerType = Standard
+        ↓
+Standard policy route
+        ↓
+Get Standard refund policy
+```
+
+Therefore, Day 9 is primarily a **decision-model refinement**, not a new execution architecture.
+
+---
+
+## 10. Existing Capabilities Preserved
+
+Day 9 did not replace or remove:
+
+- DELEGATE
+- ASK_USER
+- FINISH
+- Sequential execution
+- Parallel execution
+- Task dependency detection
+- Previous specialist result handling
+- No-duplication rules
+- Identifier preservation
+- Missing-data handling
+- Specialist selection
+- WorkflowContext
+- Orchestrator
+- SpecialistService
+- Virtual-thread parallel execution
+
+These remain part of the existing P4 architecture.
+
+---
+
+## 11. Scope Boundary
+
+No changes were required to:
+
+```text
+Controller
+Orchestrator
+WorkflowContext
+SpecialistService
+DATA Specialist
+KNOWLEDGE Specialist
+Parallel execution
+Executor
+```
+
+The Day 9 change was primarily:
+
+```text
+Supervisor Prompt
+        ↓
+Explicit Conditional Routing Rules
+        ↓
+Targeted Validation
+```
+
+---
+
+## 12. Day 9 Completion Checklist
+
+- [x] Conditional routing concept understood
+- [x] Condition vs route vs task vs specialist understood
+- [x] Supervisor prompt updated
+- [x] Existing dependency logic preserved
+- [x] Existing parallel logic preserved
+- [x] Existing ASK_USER logic preserved
+- [x] Existing FINISH logic preserved
+- [x] No Java business-specific routing added
+- [x] Conditional routing test executed
+- [x] DATA → condition → KNOWLEDGE flow verified
+- [x] Final FINISH verified
+
+---
+
+## 13. Final Status
+
+# DAY 9 — COMPLETE ✅
+
+Day 9 established **Conditional Routing as an explicit Supervisor decision capability**.
+
+The important learning is:
+
+```text
+Specialist Result
+       ↓
+Relevant Condition
+       ↓
+Applicable Route
+       ↓
+Next Task
+       ↓
+Specialist
+```
