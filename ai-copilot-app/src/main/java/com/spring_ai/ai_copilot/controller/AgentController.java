@@ -1,12 +1,14 @@
 package com.spring_ai.ai_copilot.controller;
 
-import com.spring_ai.ai_copilot.agent.tools.AgentService;
+import com.spring_ai.ai_copilot.agent.dto.OrchestratorResponse;
+import com.spring_ai.ai_copilot.agent.dto.SpecialistRequest;
+import com.spring_ai.ai_copilot.agent.dto.SpecialistResult;
+import com.spring_ai.ai_copilot.agent.dto.SupervisorDecision;
+import com.spring_ai.ai_copilot.agent.services.AgentService;
+import com.spring_ai.ai_copilot.agent.services.Orchestrator;
 import com.spring_ai.ai_copilot.agent.tools.TenantContext;
 import com.spring_ai.ai_copilot.dto.AgentChatRequest;
 import com.spring_ai.ai_copilot.dto.AgentResponse;
-import com.spring_ai.ai_copilot.dto.ChatRequest;
-import com.spring_ai.ai_copilot.dto.ChatResponse;
-import com.spring_ai.ai_copilot.service.ChatService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -23,9 +25,12 @@ public class AgentController {
 
     private final TenantContext tenantContext;
 
-    public AgentController(AgentService agentService, TenantContext tenantContext) {
+    private final Orchestrator orchestrator;
+
+    public AgentController(AgentService agentService, TenantContext tenantContext, Orchestrator orchestrator) {
         this.agentService = agentService;
         this.tenantContext = tenantContext;
+        this.orchestrator = orchestrator;
     }
 
     @PostMapping("/agent-ask-mcp")
@@ -47,7 +52,21 @@ public class AgentController {
         tenantContext.setTenantId(chatRequest.tenantId());
         log.info("controller.agent.request.started operation=agent.chat.request");
         try {
-            AgentResponse response = agentService.getChatResponse(chatRequest);
+            AgentResponse response = agentService.getKnowledgeSearch(chatRequest);
+            log.info("controller.agent.request.completed operation=agent.chat.request status=success");
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.warn("controller.agent.request.failed operation=agent.chat.request status=error exception={}", e.getClass().getSimpleName());
+            throw e;
+        }
+    }
+
+    @PostMapping("/supervisor/route")
+    public ResponseEntity<OrchestratorResponse> supervisorRoute(@RequestBody AgentChatRequest chatRequest) {
+        tenantContext.setTenantId(chatRequest.tenantId());
+        log.info("controller.agent.request.started operation=agent.chat.request");
+        try {
+            OrchestratorResponse response = orchestrator.orchestrate(chatRequest);
             log.info("controller.agent.request.completed operation=agent.chat.request status=success");
             return ResponseEntity.ok(response);
         } catch (Exception e) {

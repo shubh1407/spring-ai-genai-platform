@@ -121,8 +121,8 @@ public class AiExceptionTranslator {
             new ProviderErrorMapping(
                     "java.io.IOException",
                     HttpStatus.INTERNAL_SERVER_ERROR,
-                    "RAG_IO_ERROR",
-                    "Document I/O operation failed"
+                    "IO_ERROR",
+                    "I/O operation failed"
             ),
 
             new ProviderErrorMapping(
@@ -142,21 +142,21 @@ public class AiExceptionTranslator {
             new ProviderErrorMapping(
                     "java.lang.IllegalArgumentException",
                     HttpStatus.BAD_REQUEST,
-                    "RAG_INVALID_INPUT",
-                    "Invalid input provided to RAG operation"
+                    "INVALID_INPUT",
+                    "Invalid input provided to operation"
             ),
 
             new ProviderErrorMapping(
                     "java.lang.IllegalStateException",
                     HttpStatus.INTERNAL_SERVER_ERROR,
-                    "RAG_STATE_ERROR",
-                    "RAG operation in illegal state"
+                    "STATE_ERROR",
+                    "Operation in illegal state"
             ),
 
             new ProviderErrorMapping(
                     "java.lang.NullPointerException",
                     HttpStatus.INTERNAL_SERVER_ERROR,
-                    "RAG_NULL_POINTER",
+                    "NULL_POINTER",
                     "Unexpected null value encountered"
             )
     );
@@ -172,6 +172,18 @@ public class AiExceptionTranslator {
                     HttpStatus.GATEWAY_TIMEOUT,
                     "AI_PROVIDER_TIMEOUT",
                     "AI provider request timed out",
+                    exception
+            );
+        }
+
+        AiDomainException domainException =
+                findCause(exception, AiDomainException.class);
+
+        if (domainException != null) {
+            return new AiProviderException(
+                    domainException.getStatus(),
+                    domainException.getErrorCode(),
+                    domainException.getMessage(),
                     exception
             );
         }
@@ -243,6 +255,22 @@ public class AiExceptionTranslator {
                 if (mapping.matches(current)) {
                     return mapping;
                 }
+            }
+        }
+
+        return null;
+    }
+
+    private <T extends Throwable> T findCause(
+            Throwable throwable,
+            Class<T> targetType) {
+
+        for (Throwable current = throwable;
+             current != null;
+             current = current.getCause()) {
+
+            if (targetType.isInstance(current)) {
+                return targetType.cast(current);
             }
         }
 

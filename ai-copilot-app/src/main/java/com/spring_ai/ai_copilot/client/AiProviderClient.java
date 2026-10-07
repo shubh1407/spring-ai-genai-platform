@@ -1,7 +1,6 @@
 package com.spring_ai.ai_copilot.client;
 
 import com.spring_ai.ai_copilot.dto.AgentPlan;
-import com.spring_ai.ai_copilot.dto.AgentResponse;
 import com.spring_ai.ai_copilot.dto.ChatResponse;
 import com.spring_ai.ai_copilot.dto.FeedbackAnalysis;
 import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
@@ -286,14 +285,16 @@ public class AiProviderClient {
                 .content()
 
                 .flatMap(text ->
-                        Flux.fromArray(text.split(" ")))
+                        Flux.fromArray(text.split(" "))
+                )
 
                 .window(100)
 
                 .flatMap(window ->
                         window.collectList()
                                 .map(list ->
-                                        String.join(" ", list)))
+                                        String.join(" ", list))
+                )
 
                 .transformDeferred(
                         RateLimiterOperator.of(rateLimiter)
@@ -433,13 +434,25 @@ public class AiProviderClient {
     // AGENT / TOOL CALLING
     // ============================================================
 
+    /**
+     * Generic structured-output tool calling.
+     *
+     * IMPORTANT:
+     * This generic method is required by the current multi-agent flow.
+     * It allows callers to request:
+     *
+     * SupervisorDecision.class
+     * AgentResponse.class
+     * any other structured response DTO
+     */
     @Bulkhead(name = "aiProvider")
     @RateLimiter(name = "aiProvider")
     @CircuitBreaker(name = "aiProvider")
-    public AgentResponse getChatResponseWithToolCall(
+    public <T> T getChatResponseWithToolCall(
             String systemPrompt,
             String prompt,
             String conversationId,
+            Class<T> type,
             Object... tools) {
 
         String operation = "chat.response.tool.call";
@@ -459,7 +472,7 @@ public class AiProviderClient {
 
         try {
 
-            AgentResponse response = client.prompt()
+            T response = client.prompt()
                     .system(systemPrompt)
                     .user(prompt)
                     .tools(tools)
@@ -470,7 +483,7 @@ public class AiProviderClient {
                                     conversationId
                             ))
                     .call()
-                    .entity(AgentResponse.class);
+                    .entity(type);
 
             long latencyMs = getLatencyMs(startedAt);
 
