@@ -4524,3 +4524,944 @@ Native Tools + MCP Tools
 inside the same agentic execution flow.
 
 **Day 11 Status: COMPLETE**
+
+# Day 12 — MCP Resources & Prompts
+
+## 2. MCP Resource
+
+An MCP Resource represents externally addressable context/data exposed by an MCP server.
+
+Example:
+
+```text
+company://policies/refund
+```
+
+The project exposes company refund policy through this resource.
+
+### Resource vs RAG
+
+```text
+RAG
+→ semantic retrieval from a knowledge/vector store
+
+MCP Resource
+→ known externally addressable context/data exposed through MCP
+```
+
+A Resource is useful when a client needs a specific known piece of external context.
+
+### Resource flow
+
+```text
+MCP Client
+    ↓
+readResource()
+    ↓
+MCP Server
+    ↓
+CompanyPolicyResource
+    ↓
+Policy Content
+```
+
+For:
+
+```text
+company://policies/refund
+```
+
+the server returns:
+
+```text
+Company Refund Policy
+
+STANDARD customers:
+Refunds are allowed within 45 days of purchase.
+
+ENTERPRISE customers:
+Refunds are allowed within 60 days of purchase.
+```
+
+---
+
+## 3. MCP Prompt
+
+An MCP Prompt is a reusable prompt template exposed by the MCP server.
+
+Example:
+
+```text
+refund-analysis
+```
+
+Arguments:
+
+```text
+customerType
+purchaseDate
+```
+
+Example generated prompt:
+
+```text
+Analyze refund eligibility for a customer.
+
+Customer type: STANDARD
+Purchase date: 2026-09-01
+
+Use the company refund policy.
+Explain the applicable refund window
+and whether the customer is eligible.
+```
+
+### Mental model
+
+```text
+Tool     = Action
+Resource = Context
+Prompt   = Instruction
+```
+
+Example in this project:
+
+```text
+Tool
+→ getCompanyPolicy
+
+Resource
+→ company://policies/refund
+
+Prompt
+→ refund-analysis
+```
+
+---
+
+## 4. MCP Client Consumption
+
+The main application acts as the MCP Client.
+
+Spring AI MCP Client handles:
+
+- MCP protocol communication
+- connection/session
+- capability discovery
+- tool discovery
+- resource access
+- prompt access
+
+The application does not implement MCP protocol handling manually.
+
+### Resource test
+
+Conceptually:
+
+```java
+McpSyncClient client = mcpClients.getFirst();
+
+McpSchema.ReadResourceRequest request =
+        McpSchema.ReadResourceRequest.builder(
+                "company://policies/refund"
+        ).build();
+
+McpSchema.ReadResourceResult result =
+        client.readResource(request);
+```
+
+The returned content is extracted from:
+
+```java
+McpSchema.TextResourceContents
+```
+
+### Prompt test
+
+Conceptually:
+
+```java
+McpSchema.GetPromptRequest request =
+        McpSchema.GetPromptRequest.builder("refund-analysis")
+                .arguments(
+                        Map.of(
+                                "customerType", "STANDARD",
+                                "purchaseDate", "2026-09-01"
+                        )
+                )
+                .meta(null)
+                .build();
+
+McpSchema.GetPromptResult result =
+        client.getPrompt(request);
+```
+
+The prompt message is extracted from:
+
+```java
+McpSchema.TextContent
+```
+
+Both Resource and Prompt were tested successfully.
+
+---
+
+## 5. Day 12 Key Learning
+
+MCP exposes different capabilities for different purposes:
+
+```text
+MCP Server
+ ├── Tools
+ ├── Resources
+ └── Prompts
+```
+
+Do not force every MCP capability into the Agent as a Tool.
+
+Use each according to its responsibility.
+
+---
+
+# Day 13 — MCP Capability Discovery
+
+## 6. Discovery vs Execution
+
+These are different operations.
+
+```text
+Discovery
+→ What capabilities does the server expose?
+
+Execution / Consumption
+→ Use one of those capabilities.
+```
+
+Examples:
+
+```text
+listTools()
+listResources()
+listPrompts()
+```
+
+only discover capabilities.
+
+They do not execute them.
+
+---
+
+## 7. Current MCP Capabilities
+
+The server exposes:
+
+```text
+TOOLS
+    ↓
+getCompanyPolicy
+
+RESOURCES
+    ↓
+company://policies/{policyName}
+
+PROMPTS
+    ↓
+refund-analysis
+```
+
+This allows the client to understand what the MCP server provides.
+
+---
+
+## 8. Why Discovery Matters
+
+An MCP server can expose capabilities such as:
+
+```text
+Tools:
+- getCompanyPolicy
+- getCustomerProfile
+- createRefundRequest
+
+Resources:
+- company://policies/refund
+- company://policies/returns
+
+Prompts:
+- refund-analysis
+- customer-summary
+```
+
+The client can discover these capabilities from the server.
+
+This reduces coupling to the server's internal implementation.
+
+The client depends on the MCP-facing contract.
+
+### Important distinction
+
+```text
+listTools()
+```
+
+showing:
+
+```text
+getCompanyPolicy
+```
+
+proves discovery works.
+
+It does NOT prove that:
+
+```text
+getCompanyPolicy
+```
+
+was executed by the Agent.
+
+---
+
+## 9. Day 13 Key Learning
+
+Remember:
+
+```text
+MCP Discovery ≠ MCP Execution
+```
+
+Discovery tells us what exists.
+
+Execution actually uses a capability.
+
+This distinction is also useful when debugging MCP integrations.
+
+---
+
+# Day 14 — MCP + Agent Integration
+
+## 10. Objective
+
+Day 14 connects MCP capabilities with the existing Agent workflow.
+
+The goal is to prove the complete flow:
+
+```text
+User
+  ↓
+AgentService
+  ↓
+MCP Prompt
+  ↓
+MCP Resource
+  ↓
+Enriched Prompt
+  ↓
+Agent / LLM
+  ↓
+Tool Selection
+  ↓
+Business Tool
+  ↓
+LLM
+  ↓
+Final Response
+```
+
+---
+
+## 11. MCP Context Enrichment
+
+The MCP Prompt and Resource are retrieved before the Agent call.
+
+Conceptually:
+
+```text
+MCP WORKFLOW INSTRUCTIONS:
+<mcp prompt>
+
+MCP POLICY CONTEXT:
+<mcp resource>
+
+USER REQUEST:
+<user request>
+```
+
+This enriched prompt is passed to the Agent.
+
+Important:
+
+The Resource and Prompt are explicitly retrieved by the application.
+
+They are not automatically executed by the LLM.
+
+---
+
+## 12. Existing Agent Tools
+
+The Agent continues to receive normal Spring AI tools and MCP tool callbacks.
+
+Example:
+
+```java
+client.getChatResponseWithToolCall(
+        SYSTEM_PROMPT,
+        enrichedPrompt,
+        conversationId,
+        knowledgeSearchTool,
+        plannerTool,
+        mcpTools
+);
+```
+
+Therefore:
+
+```text
+Spring AI Tool
+      +
+Planner Tool
+      +
+Knowledge Search Tool
+      +
+MCP Tool Callback
+      ↓
+Agent
+```
+
+The existing Spring AI tool-calling loop remains responsible for tool execution.
+
+No custom Agent execution loop was introduced.
+
+---
+
+## 13. Important Boundary
+
+MCP Resource and MCP Prompt are not Tools.
+
+```text
+Resource
+→ explicitly fetched by application
+
+Prompt
+→ explicitly fetched by application
+
+Tool
+→ exposed to Agent for tool calling
+```
+
+This distinction keeps the architecture simple.
+
+---
+
+## 14. End-to-End Example
+
+User request:
+
+```text
+Check whether a STANDARD customer who purchased
+on 2026-09-01 is eligible for a refund.
+```
+
+The MCP Prompt provides instructions for refund analysis.
+
+The MCP Resource provides:
+
+```text
+STANDARD → 45 days
+ENTERPRISE → 60 days
+```
+
+The Agent then has access to the business capability:
+
+```text
+checkRefundEligibility
+```
+
+The final answer should be based on the actual policy/context and actual business-tool result.
+
+---
+
+## 15. MCP + Agent Architecture
+
+```text
+                         User
+                           │
+                           ▼
+                    ┌──────────────┐
+                    │ AgentService │
+                    └──────┬───────┘
+                           │
+                ┌──────────┴──────────┐
+                │                     │
+                ▼                     ▼
+          MCP Prompt             MCP Resource
+                │                     │
+                └──────────┬──────────┘
+                           ▼
+                    Enriched Prompt
+                           │
+                           ▼
+                    ┌──────────────┐
+                    │  Agent / LLM │
+                    └──────┬───────┘
+                           │
+                 ┌─────────┼─────────┐
+                 ▼         ▼         ▼
+              Planner   Knowledge   MCP Tools
+                         Search
+                           │
+                           ▼
+                    Business Result
+                           │
+                           ▼
+                    Final Response
+```
+
+---
+
+## 16. Why MCP + Agent is Useful
+
+Without MCP:
+
+```text
+Agent
+  ↓
+Direct application tools
+```
+
+With MCP:
+
+```text
+Agent Application
+       ↓
+    MCP Client
+       ↓
+   MCP Server
+       ↓
+External capabilities
+```
+
+This allows capabilities to be separated from the Agent application.
+
+For example:
+
+```text
+Refund MCP Server
+Customer MCP Server
+Finance MCP Server
+HR MCP Server
+```
+
+The Agent can consume capabilities through a standardized interface.
+
+---
+
+## 17. MCP Server Independence
+
+The MCP server is a separate Spring Boot application.
+
+The main application does not directly depend on MCP server Java classes.
+
+Preferred architecture:
+
+```text
+Main App
+   ↓
+MCP Client
+   ↓
+MCP Protocol
+   ↓
+MCP Server
+```
+
+The server's internal implementation can change as long as the MCP-facing contract remains compatible.
+
+If the MCP-facing contract changes incompatibly, the client/Agent may require adaptation.
+
+---
+
+# Testing
+
+## 18. Test 1 — Resource
+
+Verify:
+
+```text
+readResource()
+```
+
+returns the refund policy.
+
+Expected:
+
+```text
+Company Refund Policy
+STANDARD → 45 days
+ENTERPRISE → 60 days
+```
+
+---
+
+## 19. Test 2 — Prompt
+
+Verify:
+
+```text
+getPrompt("refund-analysis")
+```
+
+with:
+
+```text
+customerType = STANDARD
+purchaseDate = 2026-09-01
+```
+
+returns the expected generated prompt.
+
+---
+
+## 20. Test 3 — Capability Discovery
+
+Verify that the MCP server exposes:
+
+```text
+Tools:
+getCompanyPolicy
+
+Resources:
+company://policies/{policyName}
+
+Prompts:
+refund-analysis
+```
+
+Remember:
+
+```text
+Discovery only proves availability.
+```
+
+It does not prove execution.
+
+---
+
+## 21. Test 4 — End-to-End Agent
+
+Start:
+
+```text
+MCP Server → 8090
+Main App   → 8080
+```
+
+Send an Agent request.
+
+Expected execution flow:
+
+```text
+MCP Prompt fetch
+        ↓
+MCP Resource fetch
+        ↓
+AI Provider request
+        ↓
+Agent tool execution
+        ↓
+Final response
+```
+
+For the refund example, the important business tool is:
+
+```text
+checkRefundEligibility
+```
+
+The response should be based on actual tool output and policy context, not invented data.
+
+---
+
+# Production Observability
+
+## 22. MCP Logs
+
+Useful logs:
+
+```text
+mcp.resource.request.started
+mcp.resource.request.completed
+mcp.resource.request.failed
+
+mcp.prompt.request.started
+mcp.prompt.request.completed
+mcp.prompt.request.failed
+
+ai.provider.request.started
+ai.provider.request.completed
+ai.provider.request.failed
+```
+
+Useful fields:
+
+```text
+operation
+resource/prompt name
+conversationId
+latencyMs
+status
+exception type
+```
+
+Avoid logging full prompts, responses, or sensitive business data in production by default.
+
+---
+
+## 23. AI Provider Metrics
+
+The existing provider metrics cover:
+
+```text
+request count
+error count
+request duration
+provider
+model
+operation
+status
+error code
+```
+
+This is sufficient for the current P3 scope.
+
+No separate complicated metrics framework is required.
+
+---
+
+# Security
+
+## 24. MCP Security Principles
+
+MCP introduces an external capability boundary.
+
+Important considerations:
+
+### Trusted servers
+
+Only connect to trusted MCP servers.
+
+### Tool authorization
+
+Not every Agent should necessarily have access to every MCP capability.
+
+### Input validation
+
+MCP tools must validate their inputs.
+
+### Tenant isolation
+
+Do not trust arbitrary LLM-generated tenant/user identifiers.
+
+### Sensitive resources
+
+Do not expose sensitive enterprise data through resources without authorization.
+
+### Auditability
+
+MCP capability usage should be observable.
+
+---
+
+# Common Mistakes
+
+## 25. MCP is not the Agent
+
+MCP does not provide reasoning.
+
+```text
+MCP Server
+→ capability provider
+```
+
+The Agent/LLM performs reasoning and tool selection.
+
+---
+
+## 26. MCP Server should not own the Agent
+
+Avoid unnecessarily coupling:
+
+```text
+MCP Server
+   ↓
+LLM
+   ↓
+Agent
+```
+
+The MCP server in this architecture exposes capabilities.
+
+---
+
+## 27. Resource is not automatically RAG
+
+```text
+Resource → addressable external context
+RAG      → retrieval architecture
+```
+
+They can work together, but they are different concepts.
+
+---
+
+## 28. Discovery is not execution
+
+```text
+listTools()
+```
+
+does not execute a tool.
+
+---
+
+## 29. Do not turn every MCP capability into a Tool
+
+Use the appropriate capability:
+
+```text
+Tool     → action
+Resource → context/data
+Prompt   → reusable instruction
+```
+
+---
+
+# Design Decisions
+
+## 30. Decisions Made
+
+### Decision 1
+MCP server is a separate application.
+
+### Decision 2
+Main application communicates through MCP Client.
+
+### Decision 3
+MCP Tools can be supplied to the Agent through MCP tool callbacks.
+
+### Decision 4
+MCP Resources are explicitly retrieved by the application.
+
+### Decision 5
+MCP Prompts are explicitly retrieved by the application.
+
+### Decision 6
+Resource and Prompt content can enrich the Agent request.
+
+### Decision 7
+Existing Spring AI Agent tool execution remains unchanged.
+
+### Decision 8
+No custom Agent execution loop was introduced.
+
+### Decision 9
+MCP capability discovery is treated separately from capability execution.
+
+---
+
+# Interview Takeaways
+
+## 31. What is MCP?
+
+MCP is a standardized protocol for connecting AI applications/Agents with external capabilities such as Tools, Resources, and Prompts.
+
+## 32. MCP Client vs MCP Server
+
+```text
+MCP Client
+→ consumes capabilities
+
+MCP Server
+→ exposes capabilities
+```
+
+## 33. What can an MCP Server expose?
+
+```text
+Tools
+Resources
+Prompts
+```
+
+## 34. Does MCP replace RAG?
+
+No.
+
+They solve different problems.
+
+## 35. Does the Agent need the MCP server's Java implementation?
+
+No.
+
+The Agent/client interacts through the MCP-facing contract.
+
+## 36. What happens if the MCP contract changes?
+
+If a tool/resource/prompt contract changes incompatibly, the consuming client/Agent may need adaptation.
+
+---
+
+# Final P3 Mental Model
+
+```text
+                         ┌─────────────┐
+                         │    User     │
+                         └──────┬──────┘
+                                ↓
+                       ┌────────────────┐
+                       │ Agent Service  │
+                       └───────┬────────┘
+                               ↓
+                       ┌────────────────┐
+                       │   Agent / LLM  │
+                       └───────┬────────┘
+                               │
+          ┌────────────────────┼────────────────────┐
+          ↓                    ↓                    ↓
+      Planning              Tools                Memory
+                               │
+                    ┌──────────┴──────────┐
+                    ↓                     ↓
+               App Tools             MCP Tools
+                                            │
+                                            ↓
+                                    ┌──────────────┐
+                                    │  MCP Server  │
+                                    ├──────────────┤
+                                    │ Tools        │
+                                    │ Resources    │
+                                    │ Prompts      │
+                                    └──────────────┘
+```
+
+The core P3 mental model:
+
+```text
+Agent
++
+Tools
++
+Planning
++
+Memory
++
+MCP
+        ↓
+Enterprise AI Agent
+```
+
+And the MCP mental model:
+
+```text
+Tool     = Action
+Resource = Context
+Prompt   = Instruction
+```

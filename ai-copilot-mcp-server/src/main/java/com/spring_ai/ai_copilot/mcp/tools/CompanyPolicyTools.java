@@ -1,6 +1,6 @@
 package com.spring_ai.ai_copilot.mcp.tools;
 
-import com.spring_ai.ai_copilot.mcp.tools.dto.CompanyPolicy;
+import com.spring_ai.ai_copilot.mcp.dto.CompanyPolicy;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Component;

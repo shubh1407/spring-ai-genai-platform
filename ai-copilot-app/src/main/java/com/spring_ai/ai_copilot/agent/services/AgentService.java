@@ -9,14 +9,18 @@ import com.spring_ai.ai_copilot.dto.AgentChatRequest;
 import com.spring_ai.ai_copilot.dto.AgentResponse;
 import com.spring_ai.ai_copilot.exception.AiExceptionTranslator;
 import com.spring_ai.ai_copilot.exception.AiProviderException;
+import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.spec.McpSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static com.spring_ai.ai_copilot.constant.PromptsConstants.AGENT_SYSTEM_PROMPT;
@@ -37,19 +41,30 @@ public class AgentService {
 
     private final AiProviderClient client;
 
-    private final SpecialistService specialistService;
+    private final List<McpSyncClient> mcpClients;
 
-    public AgentService(KnowledgeSearchTool knowledgeSearchTool, PlannerTool plannerTool, SyncMcpToolCallbackProvider mcpTools, AiExceptionTranslator aiExceptionTranslator, AiProviderClient client, SpecialistService specialistService) {
+    public AgentService(KnowledgeSearchTool knowledgeSearchTool, PlannerTool plannerTool, SyncMcpToolCallbackProvider mcpTools, AiExceptionTranslator aiExceptionTranslator, AiProviderClient client, List<McpSyncClient> mcpClients) {
         this.knowledgeSearchTool = knowledgeSearchTool;
         this.plannerTool = plannerTool;
         this.mcpTools = mcpTools;
         this.aiExceptionTranslator = aiExceptionTranslator;
         this.client = client;
-        this.specialistService = specialistService;
+        this.mcpClients = mcpClients;
     }
 
     public AgentResponse getKnowledgeSearch(AgentChatRequest chatRequest) {
-        log.info("service.agent.response.started operation=get.knowledge.Search");
+        String operation = "agent.response";
+        long startedAt = System.nanoTime();
+
+        log.info(
+                "agent.request.started operation={} conversationId={} messageLength={}",
+                operation,
+                chatRequest.conversationId(),
+                chatRequest.message() == null
+                        ? 0
+                        : chatRequest.message().length()
+        );
+
         try {
             PromptTemplate promptTemplate = PromptTemplate.builder()
                     .template("""
@@ -63,11 +78,31 @@ public class AgentService {
 
             String prompt = promptTemplate.render(Map.of("message", chatRequest.message()));
             AgentResponse response = client.getChatResponseWithToolCall(AGENT_SYSTEM_PROMPT,prompt, chatRequest.conversationId(),AgentResponse.class,knowledgeSearchTool,plannerTool);
-            log.info("service.agent.response.completed operation=get.knowledge.Search status=success");
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.info(
+                    "agent.request.completed operation={} conversationId={} latencyMs={} status=success",
+                    operation,
+                    chatRequest.conversationId(),
+                    latencyMs
+            );
+
             return response;
         } catch (Exception e) {
-            log.warn("service.agent.response.failed operation=get.knowledge.Search status=error errorCode={} exception={}",
-                    resolveErrorCode(e), e.getClass().getSimpleName());
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.warn(
+                    "agent.request.failed operation={} conversationId={} latencyMs={} errorCode={} exception={}",
+                    operation,
+                    chatRequest.conversationId(),
+                    latencyMs,
+                    resolveErrorCode(e),
+                    e.getClass().getSimpleName()
+            );
             throw aiExceptionTranslator.translate(e);
         }
     }
@@ -114,7 +149,18 @@ public class AgentService {
     }
 
     public String getChatResponseWithMcpTools(AgentChatRequest chatRequest) {
-        log.info("service.agent.response.started operation=chat.response.with.Mcp.tools");
+        String operation = "agent.response.mcp";
+        long startedAt = System.nanoTime();
+
+        log.info(
+                "agent.request.started operation={} conversationId={} messageLength={}",
+                operation,
+                chatRequest.conversationId(),
+                chatRequest.message() == null
+                        ? 0
+                        : chatRequest.message().length()
+        );
+
         try {
             PromptTemplate promptTemplate = PromptTemplate.builder()
                     .template("""
@@ -126,14 +172,205 @@ public class AgentService {
                             """)
                     .build();
 
-            String prompt = promptTemplate.render(Map.of("message", chatRequest.message()));
-            String response = client.getChatResponseWithToolCallWithMcpTools(AGENT_SYSTEM_PROMPT,prompt, chatRequest.conversationId(),knowledgeSearchTool,plannerTool,mcpTools);
-            log.info("service.agent.response.completed operation=chat.response.with.Mcp.tools status=success");
-            return response;
+            String prompt = promptTemplate.render(
+                    Map.of("message", chatRequest.message())
+            );
+
+            // MCP Resource
+            String policy = testMcpResources();
+
+            // MCP Prompt
+            String mcpPrompt = testMcpPrompts();
+
+            String enrichedPrompt = """
+                    MCP WORKFLOW INSTRUCTIONS:
+                    %s
+
+                    MCP POLICY CONTEXT:
+                    %s
+
+                    USER REQUEST:
+                    %s
+                    """.formatted(
+                    mcpPrompt,
+                    policy,
+                    prompt
+            );
+
+            log.info(
+                    "agent.mcp.context.prepared operation={} conversationId={} policyLength={} promptLength={}",
+                    operation,
+                    chatRequest.conversationId(),
+                    policy.length(),
+                    mcpPrompt.length()
+            );
+
+            /*
+             * MCP tools are passed as normal tool callbacks.
+             */
+            AgentResponse response =
+                    client.getChatResponseWithToolCall(
+                            AGENT_SYSTEM_PROMPT,
+                            enrichedPrompt,
+                            chatRequest.conversationId(),
+                            AgentResponse.class,
+                            knowledgeSearchTool,
+                            plannerTool,
+                            mcpTools
+                    );
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.info(
+                    "agent.request.completed operation={} conversationId={} latencyMs={} status=success",
+                    operation,
+                    chatRequest.conversationId(),
+                    latencyMs
+            );
+
+            return response.message();
+
         } catch (Exception e) {
-            log.warn("service.agent.response.failed operation=chat.response.with.Mcp.tools status=error errorCode={} exception={}",
-                    resolveErrorCode(e), e.getClass().getSimpleName());
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.warn(
+                    "agent.request.failed operation={} conversationId={} latencyMs={} errorCode={} exception={}",
+                    operation,
+                    chatRequest.conversationId(),
+                    latencyMs,
+                    resolveErrorCode(e),
+                    e.getClass().getSimpleName()
+            );
+
             throw aiExceptionTranslator.translate(e);
+        }
+    }
+
+
+    public String testMcpResources() {
+
+        String uri = "company://policies/refund";
+        long startedAt = System.nanoTime();
+
+        log.info(
+                "mcp.resource.request.started uri={}",
+                uri
+        );
+
+        try {
+
+            McpSyncClient client = mcpClients.getFirst();
+
+            McpSchema.ReadResourceRequest request =
+                    McpSchema.ReadResourceRequest.builder(uri)
+                            .build();
+
+            McpSchema.ReadResourceResult result =
+                    client.readResource(request);
+
+            String content =
+                    ((McpSchema.TextResourceContents)
+                            result.contents().getFirst())
+                            .text();
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.info(
+                    "mcp.resource.request.completed uri={} latencyMs={} contentLength={} status=success",
+                    uri,
+                    latencyMs,
+                    content.length()
+            );
+
+            return content;
+
+        } catch (Exception e) {
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.warn(
+                    "mcp.resource.request.failed uri={} latencyMs={} exception={}",
+                    uri,
+                    latencyMs,
+                    e.getClass().getSimpleName()
+            );
+
+            throw e;
+        }
+    }
+
+    public String testMcpPrompts() {
+
+        String promptName = "refund-analysis";
+        long startedAt = System.nanoTime();
+
+        log.info(
+                "mcp.prompt.request.started prompt={}",
+                promptName
+        );
+
+        try {
+
+            McpSyncClient client = mcpClients.getFirst();
+
+            McpSchema.GetPromptRequest request =
+                    McpSchema.GetPromptRequest
+                            .builder(promptName)
+                            .arguments(
+                                    Map.of(
+                                            "customerType", "STANDARD",
+                                            "purchaseDate", "2026-09-01"
+                                    )
+                            )
+                            .meta(null)
+                            .build();
+
+            McpSchema.GetPromptResult result =
+                    client.getPrompt(request);
+
+            String content =
+                    ((McpSchema.TextContent)
+                            result.messages()
+                                    .getFirst()
+                                    .content())
+                            .text();
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.info(
+                    "mcp.prompt.request.completed prompt={} latencyMs={} contentLength={} status=success",
+                    promptName,
+                    latencyMs,
+                    content.length()
+            );
+
+            return content;
+
+        } catch (Exception e) {
+
+            long latencyMs = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - startedAt
+            );
+
+            log.warn(
+                    "mcp.prompt.request.failed prompt={} latencyMs={} exception={}",
+                    promptName,
+                    latencyMs,
+                    e.getClass().getSimpleName()
+            );
+
+            throw e;
         }
     }
 

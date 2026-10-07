@@ -74,4 +74,14 @@ public class AgentController {
             throw e;
         }
     }
+
+    @PostMapping("/test-mcp-resources")
+    public ResponseEntity<String> testMcpResources() {
+        return ResponseEntity.ok(agentService.testMcpResources());
+    }
+
+    @PostMapping("/test-mcp-prompt")
+    public ResponseEntity<String> testMcpPrompt() {
+        return ResponseEntity.ok(agentService.testMcpPrompts());
+    }
 }
