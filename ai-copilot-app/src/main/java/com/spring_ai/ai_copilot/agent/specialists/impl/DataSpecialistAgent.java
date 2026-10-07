@@ -70,13 +70,23 @@ public class DataSpecialistAgent implements Specialist {
             validateSpecialistResult(response);
             log.info("service.agent.response.completed operation=data.specialist status=success");
             return response;
-        } catch (AiDomainException | AiProviderException | ToolValidationException |
-                 UnsupportedDocumentTypeException e) {
-            throw e;
+        } catch (AiDomainException | AiProviderException | ToolValidationException | UnsupportedDocumentTypeException e) {
+            return new SpecialistResult(
+                    SpecialistsType.DATA,
+                    "FAILED",
+                    e.getMessage(),
+                    null
+            );
         } catch (Exception e) {
             log.warn("service.agent.response.failed operation=get.knowledge.Search status=error errorCode={} exception={}",
                     resolveErrorCode(e), e.getClass().getSimpleName());
-            throw aiExceptionTranslator.translate(e);
+            AiProviderException exception= aiExceptionTranslator.translate(e);
+            return new SpecialistResult(
+                    SpecialistsType.DATA,
+                    "FAILED",
+                    exception.getMessage(),
+                    null
+            );
         }
     }
 
@@ -87,16 +97,16 @@ public class DataSpecialistAgent implements Specialist {
 
     private void validateSpecialistResult(SpecialistResult response) {
         if (response == null) {
-            throw new InvalidSpecialistResultException("Knowledge specialist returned a null result");
+            throw new InvalidSpecialistResultException("Data specialist returned a null result");
         }
         if (response.specialistsType() == null) {
-            throw new InvalidSpecialistResultException("Knowledge specialist result is missing specialistsType");
+            throw new InvalidSpecialistResultException("Data specialist result is missing specialistsType");
         }
         if (response.status() == null) {
-            throw new InvalidSpecialistResultException("Knowledge specialist result is missing status");
+            throw new InvalidSpecialistResultException("Data specialist result is missing status");
         }
         if (response.result() == null) {
-            throw new InvalidSpecialistResultException("Knowledge specialist result is missing result content");
+            throw new InvalidSpecialistResultException("Data specialist result is missing result content");
         }
     }
 

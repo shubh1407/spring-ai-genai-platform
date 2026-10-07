@@ -100,12 +100,24 @@ public class KnowledgeSpecialists implements Specialist {
             log.info("service.agent.response.completed operation=get.knowledge.specialist status=success");
             return response;
         } catch (AiDomainException | AiProviderException | ToolValidationException | UnsupportedDocumentTypeException e) {
-            throw e;
+            return new SpecialistResult(
+                    SpecialistsType.KNOWLEDGE,
+                    "FAILED",
+                    e.getMessage(),
+                    null
+            );
         } catch (Exception e) {
             log.warn("service.agent.response.failed operation=get.knowledge.Search status=error errorCode={} exception={}",
                     resolveErrorCode(e), e.getClass().getSimpleName());
-            throw aiExceptionTranslator.translate(e);
+            AiProviderException exception= aiExceptionTranslator.translate(e);
+            return new SpecialistResult(
+                    SpecialistsType.KNOWLEDGE,
+                    "FAILED",
+                        exception.getMessage(),
+                        null
+                    );
         }
+
     }
 
     @Override

@@ -2936,3 +2936,359 @@ Next Task
        ↓
 Specialist
 ```
+
+## Failure Handling + Re-planning + Recovery
+
+### Status
+**Day 10 — COMPLETE**
+
+## 1. Objective
+
+Day 10 adds failure-aware workflow execution to OmniAI.
+
+A specialist exception must not crash the workflow. It must become a workflow-visible `FAILED` result so the Supervisor can inspect the failure, preserve successful work, and decide the next recovery action.
+
+## 2. Problem Before Day 10
+
+Previously:
+
+```text
+Specialist
+    ↓
+Exception
+    ↓
+AIExceptionTranslator
+    ↓
+Translated Exception
+    ↓
+Workflow crashes
+```
+
+The Supervisor did not get another chance to inspect the workflow state.
+
+## 3. Day 10 Design
+
+The existing `AIExceptionTranslator` is **not changed** because it is already used by the existing application.
+
+The specialist boundary converts the translated exception into a `SpecialistResult` with `FAILED` status.
+
+```text
+Specialist
+    ↓
+Exception
+    ↓
+AIExceptionTranslator
+    ↓
+Translated Exception
+    ↓
+Specialist Boundary
+    ↓
+SpecialistResult(FAILED)
+    ↓
+WorkflowContext
+    ↓
+Supervisor
+```
+
+## 4. Responsibility Separation
+
+### AIExceptionTranslator
+
+Translates raw/unknown exceptions into application-specific exceptions.
+
+### Specialist Boundary
+
+Converts the translated exception into:
+
+```text
+SpecialistResult
+status = FAILED
+```
+
+### Supervisor
+
+Inspects the failed result and decides what should happen next:
+
+- Retry the failed task
+- Re-plan/refine the task
+- Ask the user for missing information
+- Continue using successful results
+- Eventually allow the workflow to fail if recovery is impossible
+
+### Orchestrator
+
+Executes the Supervisor's decision and maintains workflow progression.
+
+## 5. Specialist Failure vs Workflow Failure
+
+These are different.
+
+### Specialist failure
+
+```text
+SpecialistResult.status = FAILED
+```
+
+Means one specialist/task failed. The workflow can still continue.
+
+### Workflow failure
+
+```text
+WorkflowStatus = FAILED
+```
+
+Means the overall workflow cannot be successfully completed.
+
+Therefore, a specialist failure does **not** automatically terminate the workflow.
+
+## 6. Exception Handling
+
+Known application exceptions can directly become failed specialist results.
+
+Generic exceptions continue through the existing translator first:
+
+```text
+Known Exception
+    ↓
+SpecialistResult(FAILED)
+
+Generic Exception
+    ↓
+AIExceptionTranslator
+    ↓
+Translated Exception
+    ↓
+SpecialistResult(FAILED)
+```
+
+The existing translator contract remains unchanged.
+
+## 7. Parallel Failure Handling
+
+Day 10 validates failure handling with Day 8 parallel execution.
+
+Example:
+
+```text
+DATA ─────────→ FAILED
+KNOWLEDGE ────→ SUCCESS
+```
+
+The successful Knowledge result must remain available.
+
+Workflow state can contain:
+
+```text
+previousResults = [
+
+    DATA
+    FAILED
+    ...
+
+    KNOWLEDGE
+    SUCCESS
+    ...
+]
+```
+
+The Supervisor receives the accumulated state.
+
+## 8. Re-planning
+
+The Supervisor does not restart the entire workflow.
+
+Example:
+
+```text
+DATA
+FAILED
+
+KNOWLEDGE
+SUCCESS
+```
+
+The Supervisor recognizes that Knowledge is already complete and only retries/re-plans the missing DATA work.
+
+```text
+FAILED DATA
+    ↓
+Supervisor
+    ↓
+DELEGATE DATA again
+```
+
+This demonstrates state-driven recovery.
+
+## 9. Day 10 Test
+
+The DATA specialist was intentionally forced to throw an exception.
+
+### First Supervisor decision
+
+```text
+DELEGATE
+
+DATA:
+Retrieve the customer type for customerId 1.
+
+KNOWLEDGE:
+Retrieve the refund policy.
+```
+
+The tasks were independent and executed in parallel.
+
+### First execution
+
+```text
+DATA       → FAILED
+KNOWLEDGE  → SUCCESS
+```
+
+The successful Knowledge result was preserved.
+
+### Second Supervisor decision
+
+The Supervisor detected that DATA failed while Knowledge was already available.
+
+It delegated DATA again:
+
+```text
+DELEGATE DATA
+Retrieve the customer type for customerId 1.
+```
+
+### Second DATA attempt
+
+DATA failed again.
+
+### Third Supervisor decision
+
+The Supervisor determined that the required information could not be recovered from another available source and requested user input.
+
+```text
+ASK_USER
+```
+
+Question:
+
+```text
+Could you please provide the customer type for customer ID 1?
+```
+
+Final response:
+
+```json
+{
+  "status": "WAITING_FOR_USER_INPUT",
+  "questionToUser": "Could you please provide the customer type for customer ID 1?",
+  "result": null
+}
+```
+
+## 10. Test Results
+
+| Capability | Result |
+|---|---|
+| Specialist exception captured | PASS |
+| Existing exception translator preserved | PASS |
+| Exception converted to FAILED result | PASS |
+| Workflow did not crash | PASS |
+| FAILED result reached Supervisor | PASS |
+| Successful parallel result preserved | PASS |
+| Supervisor called again | PASS |
+| Failed task retried | PASS |
+| Successful work was not repeated | PASS |
+| Recovery failure led to ASK_USER | PASS |
+| WAITING_FOR_USER_INPUT returned correctly | PASS |
+
+## 11. Core Architecture Principle
+
+> **A specialist failure is workflow state, not necessarily workflow termination.**
+
+The workflow is state-driven:
+
+```text
+Specialist Result
+      ↓
+WorkflowContext
+      ↓
+Supervisor
+      ↓
+Recovery Decision
+      ↓
+Next Action
+```
+
+instead of:
+
+```text
+Exception
+   ↓
+Application Crash
+```
+
+## 12. What Was Not Changed
+
+Day 10 intentionally did not introduce:
+
+- A new recovery service
+- Kafka
+- Redis
+- LangGraph
+- CrewAI
+- External workflow engines
+- Hardcoded `if FAILED then retry` business logic
+- Changes to the existing `AIExceptionTranslator`
+- Changes to the existing P3 exception contract
+
+The existing Supervisor → Specialist → WorkflowContext architecture remains intact.
+
+## 13. Existing Source Conflict Observed
+
+Testing also exposed an existing refund-policy conflict:
+
+```text
+company.pdf
+→ Standard customers: 30 days
+
+company-policy.txt
+→ Standard customers: 45 days
+```
+
+This was **not fixed in Day 10**.
+
+It is relevant to later P4 work around multi-source reasoning, evidence verification, and contradiction detection.
+
+## 14. Completion Checklist
+
+- [x] Specialist exceptions no longer terminate the P4 workflow
+- [x] Existing AIExceptionTranslator remains unchanged
+- [x] Exceptions become FAILED SpecialistResult values
+- [x] Failed results reach WorkflowContext
+- [x] Supervisor receives failed workflow state
+- [x] Supervisor can retry/re-plan
+- [x] Successful parallel results are preserved
+- [x] Recovery can request user input
+- [x] Day 10 failure/recovery scenario tested successfully
+
+## 15. Next Step
+
+### Day 11 — Multi-source Reasoning
+
+Focus:
+
+```text
+Multiple sources
+      ↓
+Combine evidence
+      ↓
+Reason across sources
+      ↓
+Produce a coherent conclusion
+```
+
+The existing refund-policy conflict will provide a real test case.
+
+---
+
+**P4 Day 10: COMPLETE**
