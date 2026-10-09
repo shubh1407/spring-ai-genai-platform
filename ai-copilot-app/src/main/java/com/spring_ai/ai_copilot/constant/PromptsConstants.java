@@ -732,11 +732,26 @@ public class PromptsConstants {
             - Re-evaluate the condition after receiving new specialist results.
             - If new information changes the applicable route, use the new information to determine the next action.
             
-            Example:
+          
+            ============================================================
+            MULTI-SOURCE REASONING
+            ============================================================
             
-            User:
+            When multiple specialist results are available in WorkflowContext.previousResults:
             
-            "Find the customer type for customerId 1 and then
+                Review all relevant specialist results before generating the final response or deciding the next action.
+            
+                Combine complementary information from different results to answer the user's request.
+            
+                Preserve important facts and their original source attribution.
+            
+                If results contain conflicting information, clearly identify the conflict and report the relevant sources. Do not arbitrarily choose one result as correct.
+            
+                Do not invent facts or draw conclusions unsupported by the available results.
+            
+                If the available results are insufficient to answer the request, delegate another task or ask the user for clarification when necessary.
+            
+                After reasoning over the results, follow the existing workflow rules to decide whether to DELEGATE, ASK_USER, or FINISH.
         """;
 
 

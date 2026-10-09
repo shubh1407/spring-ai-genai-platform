@@ -3292,3 +3292,116 @@ The existing refund-policy conflict will provide a real test case.
 ---
 
 **P4 Day 10: COMPLETE**
+
+# OmniAI --- P4 Day 11: Multi-Source Reasoning
+
+**Status:** COMPLETED\
+**Phase:** P4 --- Dynamic Multi-Agent System\
+**Focus:** Supervisor reasoning across multiple specialist results
+
+## Objective
+
+Improve the Supervisor's ability to reason over multiple results already
+available in `WorkflowContext.previousResults`, while preserving the
+existing P4 workflow behaviour.
+
+## Implementation
+
+Added a `MULTI-SOURCE REASONING` section to the existing
+`SUPERVISOR_SYSTEM_PROMPT`.
+
+The section instructs the Supervisor to:
+
+1.  Review all relevant specialist results before deciding the next
+    action or producing a final answer.
+2.  Combine complementary information from different results.
+3.  Preserve important facts and source attribution.
+4.  Clearly report conflicting findings and their sources instead of
+    arbitrarily choosing one.
+5.  Avoid unsupported facts and conclusions.
+6.  Delegate additional work or ask the user for clarification when
+    results are insufficient.
+7.  Continue using the existing `DELEGATE`, `ASK_USER`, and `FINISH`
+    workflow rules.
+
+### Scope kept unchanged
+
+-   Existing Supervisor prompt and workflow rules were retained.
+-   Existing `ASK_USER` behaviour was rechecked.
+-   No changes were required to the Orchestrator, `WorkflowContext`,
+    `SpecialistResult`, or specialist execution logic for this Day 11
+    prompt enhancement.
+
+## Validation
+
+### Test 1 --- Single specialist
+
+**Input:** `Find the customer type for customer ID 1.`
+
+**Observed:** Supervisor delegated to `DATA`; the final result reported
+that customer ID 1 is Standard.
+
+**Status:** PASS
+
+### Test 2 --- Sequential results combined
+
+**Scenario:** Retrieve the customer type, then retrieve the applicable
+refund policy.
+
+**Observed context:** - `DATA`: Customer type is `Standard`. -
+`KNOWLEDGE`: Refunds can be requested within 45 days of purchase, with
+citations available.
+
+**Observed final answer:** Combined the customer type and refund policy.
+
+**Status:** PASS
+
+### Test 3 --- Conflicting sources preserved
+
+**Scenario:** Multiple policy sources contain different refund windows.
+
+**Observed final answer:** Preserved both the 30-day finding from
+`company.pdf` and the 45-day finding from `company-policy.txt`, and also
+included other supported policy details.
+
+**Status:** PASS
+
+### Test 4B --- Independent tasks and result aggregation
+
+**Scenario:** Retrieve the refund policy and purchase details for
+customer ID 1.
+
+**Observed:** Supervisor delegated independent `KNOWLEDGE` and `DATA`
+tasks together. The workflow context contained both results, and the
+final answer combined them.
+
+**Status:** PASS for delegation and result aggregation. Confirm actual
+concurrency from execution logs if runtime parallelism needs to be
+independently verified.
+
+### ASK_USER regression check
+
+**Scenario:** Ask for a refund policy without providing the required
+customer identifier.
+
+**Observed:** The workflow returned `WAITING_FOR_USER_INPUT` and asked
+for the customer ID or account number.
+
+**Status:** PASS
+
+## Completion Criteria
+
+-   [x] Multi-source reasoning instructions added to the existing
+    Supervisor prompt.
+-   [x] Complementary specialist results combined.
+-   [x] Conflicting source findings preserved with source attribution.
+-   [x] Existing `ASK_USER` behaviour rechecked.
+-   [x] Relevant single-specialist, sequential, and independent-task
+    flows checked.
+
+## Day 11 Outcome
+
+**Day 11 is complete.** The Supervisor can combine relevant specialist
+findings, preserve conflicting evidence and its sources, and continue to
+use the existing workflow actions. The change was kept focused on the
+prompt rather than restructuring the full Supervisor prompt.
