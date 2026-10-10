@@ -35,4 +35,14 @@ public record OrchestratorResponse(
                 null
         );
     }
+
+    public static OrchestratorResponse waitForApproval(
+            String message) {
+
+        return new OrchestratorResponse(
+                WorkflowStatus.WAITING_FOR_APPROVAL,
+                message,
+                null
+        );
+    }
 }

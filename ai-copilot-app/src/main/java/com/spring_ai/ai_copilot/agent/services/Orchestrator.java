@@ -50,6 +50,13 @@ public class Orchestrator {
                     supervisorDecision.questionToUser()
             );
         }
+        if(supervisorDecision!=null && supervisorDecision.action().equals(Action.WAIT_FOR_APPROVAL)){
+            context.setWorkflowStatus(WorkflowStatus.WAITING_FOR_APPROVAL);
+            return OrchestratorResponse.waitForApproval(
+                    supervisorDecision.questionToUser()
+            );
+        }
+
         if(supervisorDecision!=null && supervisorDecision.action().equals(Action.DELEGATE)){
             context.setWorkflowStatus(WorkflowStatus.FAILED);
             return OrchestratorResponse.failed(
