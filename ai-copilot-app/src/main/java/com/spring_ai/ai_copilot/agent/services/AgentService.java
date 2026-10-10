@@ -73,10 +73,13 @@ public class AgentService {
 
                             User message:
                             {message}
+                            
+                            tenantId:
+                            {tenantId}
                             """)
                     .build();
 
-            String prompt = promptTemplate.render(Map.of("message", chatRequest.message()));
+            String prompt = promptTemplate.render(Map.of("message", chatRequest.message(),"tenantId",chatRequest.tenantId()));
             AgentResponse response = client.getChatResponseWithToolCall(AGENT_SYSTEM_PROMPT,prompt, chatRequest.conversationId(),AgentResponse.class,knowledgeSearchTool,plannerTool);
             long latencyMs = TimeUnit.NANOSECONDS.toMillis(
                     System.nanoTime() - startedAt
