@@ -1,5 +1,8 @@
 package com.spring_ai.ai_copilot.approval.service;
 
+import com.spring_ai.ai_copilot.agent.dto.WorkflowContext;
+import com.spring_ai.ai_copilot.agent.dto.WorkflowStatus;
+import com.spring_ai.ai_copilot.agent.services.WorkflowStore;
 import com.spring_ai.ai_copilot.approval.dto.ApprovalDecisionRequest;
 import com.spring_ai.ai_copilot.approval.dto.ApprovalRequest;
 import com.spring_ai.ai_copilot.approval.dto.ApprovalStatus;
@@ -20,9 +23,12 @@ public class ApprovalService {
             LoggerFactory.getLogger(ApprovalService.class);
 
     private final ApprovalStore approvalStore;
+    private final WorkflowStore workflowStore;
 
-    public ApprovalService(ApprovalStore approvalStore) {
+    public ApprovalService(ApprovalStore approvalStore,
+                          WorkflowStore workflowStore) {
         this.approvalStore = approvalStore;
+        this.workflowStore = workflowStore;
     }
 
     public ApprovalRequest create(CreateApprovalRequest input) {
@@ -40,6 +46,11 @@ public class ApprovalService {
         );
 
         approvalStore.save(request);
+        workflowStore.findByWorkflowId(input.workflowId())
+                .ifPresent(context -> {
+                    context.setPendingApprovalRequestId(request.approvalRequestId());
+                    workflowStore.save(context);
+                });
 
         log.info(
                 "APPROVAL_REQUESTED approvalId={} workflowId={} conversationId={}",
@@ -64,14 +75,26 @@ public class ApprovalService {
     public ApprovalRequest decide(
             String approvalRequestId,
             String approverId,
-            ApprovalDecisionRequest input
-    ) {
+            ApprovalDecisionRequest input) {
+
         ApprovalRequest updated = approvalStore.decide(
                 approvalRequestId,
                 approverId,
                 input.decision(),
                 input.comments()
         );
+
+        workflowStore.findByWorkflowId(updated.workflowId()).ifPresent(context -> {
+            if (updated.status() == ApprovalStatus.REJECTED) {
+                context.setWorkflowStatus(WorkflowStatus.REJECTED);
+                context.setErrorMessage("Approval rejected by approver.");
+                context.setFinalResult("Protected action was rejected.");
+                context.setPendingProtectedAction(null);
+                context.setPendingApprovalRequestId(null);
+            }
+
+            workflowStore.save(context);
+        });
 
         log.info(
                 "APPROVAL_DECISION approvalId={} workflowId={} decision={} approverId={}",

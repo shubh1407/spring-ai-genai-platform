@@ -697,6 +697,8 @@ public class AiProviderClient {
                     MODEL,
                     "operation",
                     operation,
+                    "status",
+                    status,
                     "errorCode",
                     errorCode == null
                             ? "AI_PROVIDER_ERROR"
