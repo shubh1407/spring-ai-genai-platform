@@ -3,6 +3,7 @@ package com.spring_ai.ai_copilot.agent.services;
 import com.spring_ai.ai_copilot.agent.dto.*;
 import com.spring_ai.ai_copilot.agent.tools.TenantContext;
 import com.spring_ai.ai_copilot.approval.dto.ApprovalRequest;
+import com.spring_ai.ai_copilot.approval.dto.ApprovalStatus;
 import com.spring_ai.ai_copilot.approval.dto.CreateApprovalRequest;
 import com.spring_ai.ai_copilot.approval.service.ApprovalService;
 import com.spring_ai.ai_copilot.approval.service.MockProtectedActionService;
@@ -43,23 +44,66 @@ public class Orchestrator {
     }
 
     public OrchestratorResponse orchestrate(AgentChatRequest request) {
-        String workflowId = UUID.randomUUID().toString();
-        WorkflowContext context = new WorkflowContext(
-                workflowId,
-                request.message(),
-                request.conversationId(),
-                new ArrayList<>(),
-                null,
-                WorkflowStatus.IN_PROGRESS,
-                tenantContext.getTenantId(),
-                null,
-                null,
-                null,
-                null
-        );
-        workflowStore.save(context);
+        WorkflowContext context;
+        ApprovalStatus status=null;
+        if (request.workflowId() != null && !request.workflowId().isBlank()) {
+            context = workflowStore.findByWorkflowId(request.workflowId())
+                    .orElseThrow(() ->
+                            new IllegalArgumentException("Workflow not found"));
 
-        SupervisorDecision supervisorDecision = agentService.getSupervisorResponse(context);
+            if (!context.getConversationId().equals(request.conversationId())) {
+                throw new IllegalArgumentException(
+                        "Workflow does not belong to this conversation");
+            }
+
+            if (context.getPendingApprovalRequestId() != null) {
+                ApprovalRequest approval = approvalService.getById(
+                        context.getPendingApprovalRequestId());
+
+                status = approval.status();
+
+                if (status == ApprovalStatus.PENDING) {
+                    return OrchestratorResponse.waitForApproval(
+                            "Approval is still pending.",
+                            context.getWorkflowId(),
+                            context.getConversationId(),
+                            context.getPendingApprovalRequestId());
+                }
+
+                if (status == ApprovalStatus.REJECTED) {
+                    context.setWorkflowStatus(WorkflowStatus.REJECTED);
+                    context.setErrorMessage("Approval was rejected.");
+                    workflowStore.save(context);
+
+                    return OrchestratorResponse.failed(
+                            "Approval rejected. Protected action was not executed.");
+                }
+
+                context.setWorkflowStatus(WorkflowStatus.IN_PROGRESS);
+                workflowStore.save(context);
+            }
+        } else {
+            context = new WorkflowContext(
+                    UUID.randomUUID().toString(),
+                    request.message(),
+                    request.conversationId(),
+                    new ArrayList<>(),
+                    null,
+                    WorkflowStatus.IN_PROGRESS,
+                    tenantContext.getTenantId(),
+                    null,
+                    null,
+                    null,
+                    null
+            );
+            workflowStore.save(context);
+        }
+
+        if (status == null) {
+            status = ApprovalStatus.PENDING;
+        }
+
+        SupervisorDecision supervisorDecision = agentService.getSupervisorResponse(context,status.name());
         List<SpecialistResult> specialistResults;
         int maxIterations = 10;
         int iterations = 0;
@@ -69,17 +113,25 @@ public class Orchestrator {
             context.setCurrentTasks(supervisorDecision.tasks().stream().map(SpecialistTask::task).toList());
             specialistResults = executeParallel(supervisorDecision.tasks(), context);
             context.getPreviousResults().addAll(specialistResults);
-            supervisorDecision = agentService.getSupervisorResponse(context);
+            supervisorDecision = agentService.getSupervisorResponse(context,status.name());
             iterations++;
         }
         if (supervisorDecision != null && supervisorDecision.action().equals(Action.ASK_USER)) {
+            if (status == ApprovalStatus.APPROVED) {
+                context.setWorkflowStatus(WorkflowStatus.FAILED);
+                context.setErrorMessage(
+                        "Supervisor requested approval again after approval was granted.");
+                workflowStore.save(context);
+
+                return OrchestratorResponse.failed(
+                        "Approval was already granted; duplicate approval was blocked.");
+            }
             context.setWorkflowStatus(WorkflowStatus.WAITING_FOR_USER_INPUT);
             workflowStore.save(context);
             return OrchestratorResponse.waitingForUser(supervisorDecision.questionToUser());
         }
-        if (supervisorDecision != null
-                && supervisorDecision.action() == Action.WAIT_FOR_APPROVAL) {
 
+        if (supervisorDecision != null && supervisorDecision.action() == Action.WAIT_FOR_APPROVAL) {
             context.setPendingProtectedAction("SEND_REPORT");
             context.setWorkflowStatus(WorkflowStatus.WAITING_FOR_APPROVAL);
 
@@ -107,11 +159,13 @@ public class Orchestrator {
             );
         }
 
+
         if (supervisorDecision != null && supervisorDecision.action().equals(Action.DELEGATE)) {
             context.setWorkflowStatus(WorkflowStatus.FAILED);
             workflowStore.save(context);
             return OrchestratorResponse.failed("Maximum workflow iterations exceeded");
         }
+
         context.setWorkflowStatus(WorkflowStatus.COMPLETED);
         assert supervisorDecision != null;
         workflowStore.save(context);
@@ -127,7 +181,7 @@ public class Orchestrator {
         );
     }
 
-    public WorkflowContext resumeAfterApproval(String workflowId) {
+    public WorkflowContext resumeAfterApproval(String workflowId,String status) {
         WorkflowContext context = workflowStore.findByWorkflowId(workflowId)
                 .orElseThrow(() ->
                         new IllegalArgumentException(
@@ -166,7 +220,7 @@ public class Orchestrator {
             workflowStore.save(context);
 
             // Resume the AI workflow using the saved context.
-            SupervisorDecision decision = agentService.getSupervisorResponse(context);
+            SupervisorDecision decision = agentService.getSupervisorResponse(context,status);
 
             int iterations = 0;
             int maxIterations = 10;
@@ -186,7 +240,7 @@ public class Orchestrator {
 
                 context.getPreviousResults().addAll(results);
 
-                decision = agentService.getSupervisorResponse(context);
+                decision = agentService.getSupervisorResponse(context,status);
                 iterations++;
             }
 

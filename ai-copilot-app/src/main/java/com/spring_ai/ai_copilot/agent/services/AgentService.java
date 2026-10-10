@@ -111,35 +111,67 @@ public class AgentService {
     }
 
 
-    public SupervisorDecision getSupervisorResponse(WorkflowContext chatRequest) {
+    public SupervisorDecision getSupervisorResponse(WorkflowContext chatRequest,String approvalStatus) {
         log.info("service.agent.response.started operation=get.Supervisor.response");
         try {
-            PromptTemplate promptTemplate = PromptTemplate.builder()
-                    .template("""
-                            You are a helpful AI assistant.
-                            Answer the user's question clearly and concisely.
-
-                            User message:
-                            {message}
-                            Previous Specialist Results:
-                            {previousResults}
-                            """)
-                    .build();
-
-            String prompt = promptTemplate.render(Map.of("message", chatRequest.getOriginalRequest()
-                    ,"previousResults",
-                    chatRequest.getPreviousResults().stream().filter(Objects::nonNull).map(result -> """
-                Specialist: %s
-                Status: %s
-                Result: %s
-                Sources: %s
-                """.formatted(
+            String previousResults = chatRequest.getPreviousResults()
+                    .stream()
+                    .filter(Objects::nonNull)
+                    .map(result -> """
+                        Specialist: %s
+                        Status: %s
+                        Result: %s
+                        Sources: %s
+                        """.formatted(
                             result.specialistsType(),
                             result.status(),
                             result.result(),
                             result.sources()
                     ))
-                    .collect(Collectors.joining("\n\n"))));
+                    .collect(Collectors.joining("\n\n"));
+
+            PromptTemplate promptTemplate = PromptTemplate.builder()
+                    .template("""
+                            You are the Supervisor of a multi-agent workflow.
+
+                        Original user request:
+                        {message}
+
+                        Workflow status:
+                        {workflowStatus}
+
+                        Pending protected action:
+                        {pendingAction}
+
+                        Verified approval status:
+                        {approvalStatus}
+
+                        Previous specialist results:
+                        {previousResults}
+
+                        Rules:
+                        - Approval status is verified by the backend.
+                        - If approval status is APPROVED, continue the
+                          pending workflow. Do not request the same
+                          approval again.
+                        - If approval status is PENDING, do not execute
+                          the protected action.
+                        - If approval status is REJECTED, do not execute
+                          the protected action.
+                        - Use previous specialist results and delegate
+                          remaining work when required.
+                        - Return the final response only when the
+                          workflow work is complete.
+                        """)
+                    .build();
+
+            String prompt = promptTemplate.render(Map.of(
+                    "message", String.valueOf(chatRequest.getOriginalRequest()),
+                    "workflowStatus", String.valueOf(chatRequest.getWorkflowStatus()),
+                    "pendingAction", String.valueOf(chatRequest.getPendingProtectedAction()),
+                    "approvalStatus", approvalStatus,
+                    "previousResults", previousResults
+            ));
             SupervisorDecision response = client.getChatResponseWithToolCall(SUPERVISOR_SYSTEM_PROMPT,prompt,chatRequest.getConversationId() , SupervisorDecision.class);
             log.info("service.agent.response.completed operation=get.Supervisor.response status=success");
             return response;

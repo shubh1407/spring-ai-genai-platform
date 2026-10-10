@@ -84,17 +84,21 @@ public class ApprovalService {
                 input.comments()
         );
 
-        workflowStore.findByWorkflowId(updated.workflowId()).ifPresent(context -> {
-            if (updated.status() == ApprovalStatus.REJECTED) {
-                context.setWorkflowStatus(WorkflowStatus.REJECTED);
-                context.setErrorMessage("Approval rejected by approver.");
-                context.setFinalResult("Protected action was rejected.");
-                context.setPendingProtectedAction(null);
-                context.setPendingApprovalRequestId(null);
-            }
+        workflowStore.findByWorkflowId(updated.workflowId())
+                .ifPresent(context -> {
 
-            workflowStore.save(context);
-        });
+                    if (updated.status() == ApprovalStatus.APPROVED) {
+                        context.setWorkflowStatus(WorkflowStatus.IN_PROGRESS);
+                        context.setErrorMessage(null);
+
+                    } else if (updated.status() == ApprovalStatus.REJECTED) {
+                        context.setWorkflowStatus(WorkflowStatus.REJECTED);
+                        context.setErrorMessage("Approval rejected by approver.");
+                        context.setFinalResult("Protected action was rejected.");
+                    }
+
+                    workflowStore.save(context);
+                });
 
         log.info(
                 "APPROVAL_DECISION approvalId={} workflowId={} decision={} approverId={}",

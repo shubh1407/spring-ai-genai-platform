@@ -51,16 +51,10 @@ public class ApprovalController {
             @RequestHeader("X-Approver-Id") String approverId,
             @Valid @RequestBody ApprovalDecisionRequest request) {
 
-        ApprovalRequest updated = approvalService.decide(
+        return approvalService.decide(
                 approvalRequestId,
                 approverId,
                 request
         );
-
-        if (updated.status() == ApprovalStatus.APPROVED) {
-            orchestrator.resumeAfterApproval(updated.workflowId());
-        }
-
-        return updated;
     }
 }

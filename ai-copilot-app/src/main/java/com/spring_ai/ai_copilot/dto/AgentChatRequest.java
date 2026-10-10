@@ -11,5 +11,6 @@ public record AgentChatRequest(
         String message,
         @NotBlank(message = "tenant id can't be blank")
         @Size(max = 1000, message = "tenant id can't be longer than 1000 characters")
-        String tenantId) {
+        String tenantId,
+        String workflowId) {
 }
