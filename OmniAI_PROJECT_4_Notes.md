@@ -3405,3 +3405,425 @@ for the customer ID or account number.
 findings, preserve conflicting evidence and its sources, and continue to
 use the existing workflow actions. The change was kept focused on the
 prompt rather than restructuring the full Supervisor prompt.
+
+
+# OmniAI --- P4 Day 13 README
+
+## Human-in-the-Loop (HITL) Approval Workflow
+
+**Project:** OmniAI --- Enterprise AI Intelligence & Automation
+Platform\
+**Phase:** P4 --- Dynamic Multi-Agent Orchestration\
+**Day:** 13\
+**Topic:** Supervisor-driven approval, workflow resumption, and
+protected-action control\
+**Status:** Implementation and testing completed
+
+------------------------------------------------------------------------
+
+## 1. Objective
+
+Day 13 adds a Human-in-the-Loop (HITL) approval path to the P4
+multi-agent workflow.
+
+The Supervisor can decide that an operation requires approval instead of
+continuing immediately. The Orchestrator creates an approval request,
+records the approval reference in the workflow context, and returns the
+information required for the approval decision.
+
+When the workflow is submitted again with its existing `workflowId`, the
+Orchestrator loads the saved workflow and checks the associated approval
+status. A pending approval keeps the workflow waiting; a rejected
+approval stops the protected path; an approved workflow can continue
+through the Supervisor and specialist-delegation loop.
+
+The implementation reuses the existing workflow context instead of
+starting a new workflow when resuming.
+
+## 2. What Was Implemented
+
+-   Added a `WAIT_FOR_APPROVAL` Supervisor action to the orchestration
+    flow.
+-   Integrated the Orchestrator with `ApprovalService`.
+-   Created an approval request when the Supervisor requests approval.
+-   Saved the approval request ID and pending protected-action name in
+    `WorkflowContext`.
+-   Returned workflow, conversation, and approval identifiers in the
+    approval response.
+-   Added workflow resumption using an existing `workflowId`.
+-   Validated that the workflow belongs to the supplied
+    `conversationId`.
+-   Retrieved the associated approval status before continuing.
+-   Passed the approval status to `AgentService` so the Supervisor can
+    reason about the current approval state.
+-   Preserved the original request and previous specialist results
+    during resumption.
+-   Added handling for pending and rejected approval states.
+-   Tested the approval path as part of Day 13.
+
+## 3. Main Components and Responsibilities
+
+### 3.1 `Orchestrator`
+
+The Orchestrator controls the workflow lifecycle.
+
+For a new request, it creates a `WorkflowContext`, stores it, and asks
+the Supervisor for a decision.
+
+For an existing request, it retrieves the saved context using
+`workflowId`, checks the conversation ID, and retrieves the associated
+approval status through `ApprovalService`.
+
+It then passes the context and approval status to the Supervisor. If the
+Supervisor delegates work, the Orchestrator executes the assigned
+specialists, appends their results to `previousResults`, and asks the
+Supervisor to decide again.
+
+### 3.2 `AgentService`
+
+`AgentService` obtains the structured `SupervisorDecision`.
+
+The Orchestrator calls the Supervisor with the workflow context and the
+approval status, for example:
+
+``` java
+SupervisorDecision supervisorDecision =
+        agentService.getSupervisorResponse(context, status.name());
+```
+
+After each specialist delegation, the Supervisor is called again with
+the updated context and the same approval status.
+
+The Supervisor uses the original request, accumulated specialist
+results, and approval status to decide the next action.
+
+### 3.3 `WorkflowContext`
+
+The workflow context represents the state of the ongoing task. The
+current implementation uses these fields:
+
+  -----------------------------------------------------------------------
+Field                               Purpose
+  ----------------------------------- -----------------------------------
+`workflowId`                        Identifies the workflow across
+requests
+
+`originalRequest`                   Preserves the initial user request
+
+`conversationId`                    Associates the workflow with its
+conversation
+
+`previousResults`                   Stores specialist results
+accumulated so far
+
+`currentTasks`                      Stores the tasks currently
+delegated
+
+`workflowStatus`                    Represents the workflow lifecycle
+
+`tenantId`                          Associates the workflow with its
+tenant
+
+`pendingApprovalRequestId`          Identifies the approval request
+
+`pendingProtectedAction`            Identifies the protected action
+awaiting approval
+
+`finalResult`                       Stores the final result when set
+
+`errorMessage`                      Stores workflow failure or
+rejection information
+  -----------------------------------------------------------------------
+
+**Important:** The approval status is read from the associated
+`ApprovalRequest` by the Orchestrator. In the implementation documented
+here, it is passed to the Supervisor as a method argument; it is not
+necessary to add an `approvalStatus` field to `WorkflowContext` for this
+path.
+
+### 3.4 `ApprovalService`
+
+The approval service creates approval requests and retrieves their
+current status.
+
+The approval lifecycle uses:
+
+-   `PENDING`
+-   `APPROVED`
+-   `REJECTED`
+
+The Orchestrator uses the approval request ID saved in `WorkflowContext`
+to retrieve the current decision.
+
+### 3.5 `SpecialistService`
+
+The specialist service executes tasks delegated by the Supervisor. The
+Orchestrator collects the returned `SpecialistResult` and appends it to
+`WorkflowContext.previousResults` before calling the Supervisor again.
+
+### 3.6 `MockProtectedActionService`
+
+This service represents the mock protected operation used by the HITL
+example. The protected operation must only be executed after the backend
+has verified the relevant approval decision. The LLM prompt is not an
+authorization boundary.
+
+------------------------------------------------------------------------
+
+## 4. Workflow A --- Requesting Approval
+
+When the Supervisor returns `WAIT_FOR_APPROVAL`, the Orchestrator:
+
+1.  Sets `pendingProtectedAction` to `SEND_REPORT`.
+2.  Sets `workflowStatus` to `WAITING_FOR_APPROVAL`.
+3.  Creates an approval request through `ApprovalService`.
+4.  Stores the returned `approvalRequestId` in the workflow context.
+5.  Saves the updated context.
+6.  Returns a response containing the approval question and workflow
+    identifiers.
+
+The relevant implementation flow is:
+
+``` java
+if (supervisorDecision != null
+        && supervisorDecision.action() == Action.WAIT_FOR_APPROVAL) {
+
+    context.setPendingProtectedAction("SEND_REPORT");
+    context.setWorkflowStatus(WorkflowStatus.WAITING_FOR_APPROVAL);
+
+    ApprovalRequest approvalRequest = approvalService.create(
+            new CreateApprovalRequest(
+                    context.getWorkflowId(),
+                    context.getConversationId(),
+                    "SEND_REPORT",
+                    supervisorDecision.questionToUser(),
+                    "approver-1"
+            )
+    );
+
+    context.setPendingApprovalRequestId(
+            approvalRequest.approvalRequestId()
+    );
+
+    workflowStore.save(context);
+
+    return OrchestratorResponse.waitForApproval(
+            supervisorDecision.questionToUser(),
+            context.getWorkflowId(),
+            context.getConversationId(),
+            approvalRequest.approvalRequestId()
+    );
+}
+```
+
+This pauses the workflow and gives the caller the IDs needed to track
+the approval.
+
+## 5. Workflow B --- Resuming an Existing Workflow
+
+A subsequent request supplies the existing `workflowId`.
+
+The Orchestrator:
+
+1.  Loads the context from `WorkflowStore`.
+2.  Rejects an unknown workflow ID.
+3.  Checks that the supplied `conversationId` matches the saved
+    workflow.
+4.  Reads `pendingApprovalRequestId` from the context.
+5.  Retrieves the associated `ApprovalRequest`.
+6.  Checks the approval status before proceeding.
+
+The status-handling logic is:
+
+### `PENDING`
+
+The Orchestrator returns a waiting-for-approval response. The Supervisor
+and protected path are not executed for that request.
+
+### `REJECTED`
+
+The Orchestrator sets the workflow status to `REJECTED`, records an
+error message, saves the context, and returns a rejection response. The
+protected action must not execute.
+
+### `APPROVED`
+
+The Orchestrator sets the workflow status to `IN_PROGRESS`, saves the
+existing context, and passes the approval status to the Supervisor.
+
+The Supervisor may then return `DELEGATE`, for example, assigning the
+report-generation task to the `REPORT` specialist. The specialist result
+is added to the existing context and the Supervisor is called again.
+
+This is continuation of the same workflow---not creation of a new
+workflow.
+
+------------------------------------------------------------------------
+
+## 6. End-to-End Approval Flow
+
+``` text
+Initial User Request
+        |
+        v
+Create WorkflowContext
+        |
+        v
+Supervisor Decision
+        |
+        +---- DELEGATE
+        |       |
+        |       v
+        |   Specialist Execution
+        |       |
+        |       v
+        |   Save SpecialistResult
+        |       |
+        |       v
+        |   Supervisor Again
+        |
+        +---- WAIT_FOR_APPROVAL
+                |
+                v
+        Create ApprovalRequest
+                |
+                v
+        Save Approval Request ID
+                |
+                v
+        Return WAITING_FOR_APPROVAL
+                |
+                v
+        Human Makes Decision
+                |
+                v
+        Resume with workflowId
+                |
+                v
+        Retrieve Existing Context
+                |
+                v
+        Check Approval Status
+          /       |       \
+         /        |        \
+    PENDING    APPROVED   REJECTED
+       |          |          |
+     Wait      Supervisor   Stop protected
+                   |         operation
+                   v
+               DELEGATE
+                   |
+                   v
+             REPORT Specialist
+                   |
+                   v
+            Save SpecialistResult
+                   |
+                   v
+             Supervisor Again
+                   |
+                   v
+              Final Response
+```
+
+------------------------------------------------------------------------
+
+## 7. Approval Status and Workflow Status
+
+These values represent different things.
+
+### Approval status
+
+Describes the human decision:
+
+``` text
+PENDING
+APPROVED
+REJECTED
+```
+
+### Workflow status
+
+Describes the workflow lifecycle. The implementation includes statuses
+such as:
+
+``` text
+IN_PROGRESS
+WAITING_FOR_APPROVAL
+WAITING_FOR_USER_INPUT
+COMPLETED
+FAILED
+REJECTED
+```
+
+An approval can be `APPROVED` while the workflow is still `IN_PROGRESS`.
+Approval does not itself mean that the complete workflow has finished.
+
+------------------------------------------------------------------------
+
+## 8. Day 13 Testing
+
+Day 13 testing has been completed.
+
+The approval-flow scenarios covered by the test effort include:
+
+-   Approval request creation when the Supervisor returns
+    `WAIT_FOR_APPROVAL`.
+-   Waiting behavior while approval is `PENDING`.
+-   Resumption of an existing workflow after approval.
+-   Passing the approval status to the Supervisor.
+-   Supervisor delegation to the `REPORT` specialist after approval.
+-   Rejection handling.
+-   Workflow ID lookup and conversation ownership validation.
+-   Preservation of the existing workflow context and specialist
+    results.
+
+The observed approved-path decision was equivalent to:
+
+``` text
+SupervisorDecision
+  action = DELEGATE
+  specialistsType = REPORT
+  reason = Approval is approved and data retrieved;
+           generate the report before sending.
+```
+
+This confirms that the Supervisor can continue orchestration after
+approval and delegate report generation. It does not, on its own, prove
+that a separate report-sending action has executed.
+
+------------------------------------------------------------------------
+
+## 9. Safety and Correctness Notes
+
+-   Reuse the saved `WorkflowContext` when a `workflowId` is supplied.
+-   Validate that the workflow belongs to the expected conversation.
+-   Check approval status in backend code before allowing a protected
+    action.
+-   Do not treat an LLM response saying that approval is granted as
+    proof of authorization.
+-   Prevent duplicate approval requests for an already-approved
+    operation.
+-   Ensure a protected action is executed at most once.
+-   Keep report generation separate from report sending when only
+    sending is protected.
+-   Preserve existing P1--P3 behavior.
+
+------------------------------------------------------------------------
+
+## 10. Day 13 Outcome
+
+Day 13 introduced the HITL approval path into the P4 dynamic multi-agent
+workflow.
+
+The Orchestrator can request approval, store the approval reference,
+retrieve the decision during workflow resumption, handle pending and
+rejected states, and continue the approved workflow through the
+Supervisor. The approved-path test showed the Supervisor delegating
+report generation to the `REPORT` specialist.
+
+**Day 13 is considered complete based on the implementation and testing
+reported for this phase.**
+
+Day 14 is reserved for the final end-to-end validation and closure of
+P4.
