@@ -38,6 +38,18 @@ public class DataSpecialistAgent implements Specialist {
     public SpecialistResult execute(SpecialistRequest chatRequest, String conversationId) {
         log.info("Data Specialists agent is called for conversation id {},task {}, tenantId {}", chatRequest.conversationId(), chatRequest.originalMessage(), chatRequest.tenantId());
         try {
+            String previousResult = chatRequest.context().getPreviousResults().stream().filter(Objects::nonNull).map(result -> """
+                                    Specialist: %s
+                                    Status: %s
+                                    Result: %s
+                                    Sources: %s
+                                    """.formatted(
+                            result.specialistsType(),
+                            result.status(),
+                            result.result(),
+                            result.sources()
+                    ))
+                    .collect(Collectors.joining("\n\n"));
             PromptTemplate promptTemplate = PromptTemplate.builder()
                     .template("""
                             Original User Request:
@@ -52,19 +64,7 @@ public class DataSpecialistAgent implements Specialist {
                     .build();
 
             String prompt = promptTemplate.render(Map.of("message", chatRequest.originalMessage(), "task", chatRequest.task()
-                    , "previousResults",
-                    chatRequest.context().getPreviousResults().stream().filter(Objects::nonNull).map(result -> """
-                                    Specialist: %s
-                                    Status: %s
-                                    Result: %s
-                                    Sources: %s
-                                    """.formatted(
-                                    result.specialistsType(),
-                                    result.status(),
-                                    result.result(),
-                                    result.sources()
-                            ))
-                            .collect(Collectors.joining("\n\n"))
+                    , "previousResults",previousResult
             ));
             SpecialistResult response = client.getChatResponseWithToolCall(DATA_SPECIALIST_SYSTEM_PROMPT, prompt, conversationId, SpecialistResult.class, sqlSearchTools);
             validateSpecialistResult(response);
